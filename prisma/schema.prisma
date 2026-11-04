@@ -1,0 +1,666 @@
+// Prisma schema - ERP + CRM
+// Money is stored as Decimal(14,2). Never use Float for money.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Auth / RBAC
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String    @id @default(cuid())
+  name         String
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  isActive     Boolean   @default(true) @map("is_active")
+  lastLoginAt  DateTime? @map("last_login_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  deletedAt    DateTime? @map("deleted_at")
+
+  userRoles        UserRole[]
+  sessions         Session[]
+  passwordResets   PasswordResetToken[]
+  auditLogs        AuditLog[]
+  createdSales     Sale[]              @relation("SaleCreatedBy")
+  createdTxns      Transaction[]       @relation("TransactionCreatedBy")
+  stageMoves       CrmStageHistory[]
+  assignedCards    CrmCard[]           @relation("CardAssignee")
+
+  @@index([email])
+  @@map("users")
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  name        String
+  description String?
+  isSystem    Boolean  @default(false) @map("is_system")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String @map("role_id")
+  permissionId String @map("permission_id")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  userId String @map("user_id")
+  roleId String @map("role_id")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  tokenHash String   @unique @map("token_hash")
+  expiresAt DateTime @map("expires_at")
+  userAgent String?  @map("user_agent")
+  ipAddress String?  @map("ip_address")
+  createdAt DateTime @default(now()) @map("created_at")
+  revokedAt DateTime? @map("revoked_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String    @map("user_id")
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("password_reset_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// Customers
+// ---------------------------------------------------------------------------
+
+enum CustomerStatus {
+  LEAD
+  ACTIVE
+  INACTIVE
+  BLOCKED
+}
+
+model Customer {
+  id           String         @id @default(cuid())
+  name         String
+  document     String?        @unique // CPF, digits only
+  phone        String?
+  email        String?
+  zipCode      String?        @map("zip_code")
+  street       String?
+  number       String?
+  complement   String?
+  district     String?
+  city         String?
+  state        String?
+  driveFolderUrl String?      @map("drive_folder_url")
+  notes        String?
+  status       CustomerStatus @default(LEAD)
+  externalId   String?        @map("external_id")
+  source       String?
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+  deletedAt    DateTime?      @map("deleted_at")
+
+  sales        Sale[]
+  contracts    Contract[]
+  services     ServiceExecution[]
+  transactions Transaction[]
+  documents    Document[]
+  crmCards     CrmCard[]
+
+  @@index([name])
+  @@index([phone])
+  @@map("customers")
+}
+
+// ---------------------------------------------------------------------------
+// Catalog
+// ---------------------------------------------------------------------------
+
+enum ProductKind {
+  CONSULTATION // low ticket, no CRM card
+  SERVICE      // high ticket, creates contract + CRM card
+  OTHER
+}
+
+model ProductService {
+  id              String      @id @default(cuid())
+  name            String
+  description     String?
+  category        String?
+  kind            ProductKind @default(SERVICE)
+  defaultPrice    Decimal     @default(0) @map("default_price") @db.Decimal(14, 2)
+  defaultCost     Decimal     @default(0) @map("default_cost") @db.Decimal(14, 2)
+  allowCustomPrice Boolean    @default(true) @map("allow_custom_price")
+  createsCrmCard  Boolean     @default(true) @map("creates_crm_card")
+  isActive        Boolean     @default(true) @map("is_active")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+  deletedAt       DateTime?   @map("deleted_at")
+
+  saleItems SaleItem[]
+  services  ServiceExecution[]
+
+  @@index([isActive])
+  @@map("products_services")
+}
+
+model PaymentMethod {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  transactions Transaction[]
+  installments Installment[]
+
+  @@map("payment_methods")
+}
+
+model ExpenseCategory {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  name      String
+  isSystem  Boolean  @default(false) @map("is_system")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  transactions Transaction[]
+
+  @@map("expense_categories")
+}
+
+// ---------------------------------------------------------------------------
+// Sales
+// ---------------------------------------------------------------------------
+
+enum SaleStatus {
+  OPEN
+  PARTIALLY_PAID
+  PAID
+  CANCELLED
+}
+
+model Sale {
+  id          String     @id @default(cuid())
+  code        String     @unique
+  customerId  String     @map("customer_id")
+  soldAt      DateTime   @map("sold_at")
+  subtotal    Decimal    @default(0) @db.Decimal(14, 2)
+  discount    Decimal    @default(0) @db.Decimal(14, 2)
+  total       Decimal    @default(0) @db.Decimal(14, 2)
+  status      SaleStatus @default(OPEN)
+  notes       String?
+  createdById String?    @map("created_by_id")
+  externalId  String?    @map("external_id")
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+  deletedAt   DateTime?  @map("deleted_at")
+  cancelledAt DateTime?  @map("cancelled_at")
+
+  customer  Customer           @relation(fields: [customerId], references: [id])
+  createdBy User?              @relation("SaleCreatedBy", fields: [createdById], references: [id])
+  items     SaleItem[]
+  contracts Contract[]
+  services  ServiceExecution[]
+  allocations TransactionAllocation[]
+
+  @@index([customerId])
+  @@index([soldAt])
+  @@index([status])
+  @@map("sales")
+}
+
+model SaleItem {
+  id          String  @id @default(cuid())
+  saleId      String  @map("sale_id")
+  productId   String  @map("product_id")
+  description String
+  quantity    Int     @default(1)
+  unitPrice   Decimal @map("unit_price") @db.Decimal(14, 2)
+  unitCost    Decimal @default(0) @map("unit_cost") @db.Decimal(14, 2)
+  discount    Decimal @default(0) @db.Decimal(14, 2)
+  total       Decimal @db.Decimal(14, 2)
+
+  sale    Sale           @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product ProductService @relation(fields: [productId], references: [id])
+
+  @@index([saleId])
+  @@map("sale_items")
+}
+
+// ---------------------------------------------------------------------------
+// Contracts & installments
+// ---------------------------------------------------------------------------
+
+enum ContractStatus {
+  DRAFT
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+model Contract {
+  id          String         @id @default(cuid())
+  code        String         @unique
+  customerId  String         @map("customer_id")
+  saleId      String?        @map("sale_id")
+  title       String
+  totalAmount Decimal        @map("total_amount") @db.Decimal(14, 2)
+  startDate   DateTime       @map("start_date")
+  endDate     DateTime?      @map("end_date")
+  status      ContractStatus @default(ACTIVE)
+  notes       String?
+  externalId  String?        @map("external_id")
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+  deletedAt   DateTime?      @map("deleted_at")
+
+  customer     Customer                @relation(fields: [customerId], references: [id])
+  sale         Sale?                   @relation(fields: [saleId], references: [id])
+  installments Installment[]
+  services     ServiceExecution[]
+  documents    Document[]
+  crmCards     CrmCard[]
+  allocations  TransactionAllocation[]
+
+  @@index([customerId])
+  @@index([status])
+  @@map("contracts")
+}
+
+enum InstallmentStatus {
+  PENDING
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+model Installment {
+  id              String            @id @default(cuid())
+  contractId      String            @map("contract_id")
+  number          Int
+  label           String?
+  dueDate         DateTime          @map("due_date")
+  expectedAmount  Decimal           @map("expected_amount") @db.Decimal(14, 2)
+  paidAmount      Decimal           @default(0) @map("paid_amount") @db.Decimal(14, 2)
+  status          InstallmentStatus @default(PENDING)
+  paymentMethodId String?           @map("payment_method_id")
+  notes           String?
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  contract      Contract                @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  paymentMethod PaymentMethod?          @relation(fields: [paymentMethodId], references: [id])
+  allocations   TransactionAllocation[]
+
+  @@unique([contractId, number])
+  @@index([dueDate])
+  @@index([status])
+  @@map("installments")
+}
+
+// ---------------------------------------------------------------------------
+// Service execution
+// ---------------------------------------------------------------------------
+
+enum ServiceExecutionStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model ServiceExecution {
+  id          String                 @id @default(cuid())
+  customerId  String                 @map("customer_id")
+  productId   String                 @map("product_id")
+  contractId  String?                @map("contract_id")
+  saleId      String?                @map("sale_id")
+  status      ServiceExecutionStatus @default(NOT_STARTED)
+  startedAt   DateTime?              @map("started_at")
+  completedAt DateTime?              @map("completed_at")
+  notes       String?
+  createdAt   DateTime               @default(now()) @map("created_at")
+  updatedAt   DateTime               @updatedAt @map("updated_at")
+  deletedAt   DateTime?              @map("deleted_at")
+
+  customer Customer       @relation(fields: [customerId], references: [id])
+  product  ProductService @relation(fields: [productId], references: [id])
+  contract Contract?      @relation(fields: [contractId], references: [id])
+  sale     Sale?          @relation(fields: [saleId], references: [id])
+  crmCards CrmCard[]
+
+  @@index([customerId])
+  @@map("services")
+}
+
+// ---------------------------------------------------------------------------
+// Finance
+// ---------------------------------------------------------------------------
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+}
+
+enum TransactionStatus {
+  PENDING
+  PARTIALLY_SETTLED
+  SETTLED
+  OVERDUE
+  CANCELLED
+  REFUNDED
+}
+
+model Transaction {
+  id               String            @id @default(cuid())
+  code             String            @unique
+  type             TransactionType
+  description      String
+  customerId       String?           @map("customer_id")
+  expenseCategoryId String?          @map("expense_category_id")
+  paymentMethodId  String?           @map("payment_method_id")
+  expectedAmount   Decimal           @map("expected_amount") @db.Decimal(14, 2)
+  settledAmount    Decimal           @default(0) @map("settled_amount") @db.Decimal(14, 2)
+  dueDate          DateTime?         @map("due_date")
+  settledAt        DateTime?         @map("settled_at")
+  competenceDate   DateTime          @map("competence_date")
+  status           TransactionStatus @default(PENDING)
+  origin           String            @default("MANUAL")
+  externalId       String?           @map("external_id")
+  externalProvider String?           @map("external_provider")
+  notes            String?
+  createdById      String?           @map("created_by_id")
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+  cancelledAt      DateTime?         @map("cancelled_at")
+  refundedAt       DateTime?         @map("refunded_at")
+
+  customer        Customer?        @relation(fields: [customerId], references: [id])
+  expenseCategory ExpenseCategory? @relation(fields: [expenseCategoryId], references: [id])
+  paymentMethod   PaymentMethod?   @relation(fields: [paymentMethodId], references: [id])
+  createdBy       User?            @relation("TransactionCreatedBy", fields: [createdById], references: [id])
+  allocations     TransactionAllocation[]
+
+  @@unique([externalProvider, externalId], name: "external_unique")
+  @@index([type, status])
+  @@index([competenceDate])
+  @@index([dueDate])
+  @@map("transactions")
+}
+
+enum AllocationTargetType {
+  INSTALLMENT
+  CONTRACT
+  SALE
+  SERVICE
+}
+
+model TransactionAllocation {
+  id            String               @id @default(cuid())
+  transactionId String               @map("transaction_id")
+  targetType    AllocationTargetType @map("target_type")
+  installmentId String?              @map("installment_id")
+  contractId    String?              @map("contract_id")
+  saleId        String?              @map("sale_id")
+  amount        Decimal              @db.Decimal(14, 2)
+  createdAt     DateTime             @default(now()) @map("created_at")
+  reversedAt    DateTime?            @map("reversed_at")
+
+  transaction Transaction  @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  installment Installment? @relation(fields: [installmentId], references: [id])
+  contract    Contract?    @relation(fields: [contractId], references: [id])
+  sale        Sale?        @relation(fields: [saleId], references: [id])
+
+  @@index([transactionId])
+  @@index([installmentId])
+  @@map("transaction_allocations")
+}
+
+// ---------------------------------------------------------------------------
+// Documents
+// ---------------------------------------------------------------------------
+
+enum DocumentKind {
+  DRIVE_FOLDER
+  CONTRACT
+  RECEIPT
+  OTHER
+}
+
+model Document {
+  id         String       @id @default(cuid())
+  customerId String?      @map("customer_id")
+  contractId String?      @map("contract_id")
+  title      String
+  url        String
+  kind       DocumentKind @default(OTHER)
+  notes      String?
+  externalId String?      @map("external_id")
+  createdAt  DateTime     @default(now()) @map("created_at")
+  updatedAt  DateTime     @updatedAt @map("updated_at")
+  deletedAt  DateTime?    @map("deleted_at")
+
+  customer Customer? @relation(fields: [customerId], references: [id])
+  contract Contract? @relation(fields: [contractId], references: [id])
+
+  @@index([customerId])
+  @@map("documents")
+}
+
+// ---------------------------------------------------------------------------
+// CRM
+// ---------------------------------------------------------------------------
+
+model CrmStage {
+  id        String   @id @default(cuid())
+  name      String
+  position  Int
+  color     String?
+  isFinal   Boolean  @default(false) @map("is_final")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  cards        CrmCard[]
+  historyFrom  CrmStageHistory[] @relation("FromStage")
+  historyTo    CrmStageHistory[] @relation("ToStage")
+
+  @@unique([position])
+  @@map("crm_stages")
+}
+
+enum CrmCardStatus {
+  OPEN
+  DONE
+  ARCHIVED
+}
+
+model CrmCard {
+  id          String        @id @default(cuid())
+  customerId  String        @map("customer_id")
+  contractId  String?       @map("contract_id")
+  serviceId   String?       @map("service_id")
+  stageId     String        @map("stage_id")
+  assigneeId  String?       @map("assignee_id")
+  title       String
+  position    Int           @default(0)
+  status      CrmCardStatus @default(OPEN)
+  notes       String?
+  enteredStageAt DateTime   @default(now()) @map("entered_stage_at")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+  deletedAt   DateTime?     @map("deleted_at")
+
+  customer Customer          @relation(fields: [customerId], references: [id])
+  contract Contract?         @relation(fields: [contractId], references: [id])
+  service  ServiceExecution? @relation(fields: [serviceId], references: [id])
+  stage    CrmStage          @relation(fields: [stageId], references: [id])
+  assignee User?             @relation("CardAssignee", fields: [assigneeId], references: [id])
+  history  CrmStageHistory[]
+
+  @@index([stageId])
+  @@index([customerId])
+  @@map("crm_cards")
+}
+
+model CrmStageHistory {
+  id          String   @id @default(cuid())
+  cardId      String   @map("card_id")
+  fromStageId String?  @map("from_stage_id")
+  toStageId   String   @map("to_stage_id")
+  movedById   String?  @map("moved_by_id")
+  note        String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  card      CrmCard   @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  fromStage CrmStage? @relation("FromStage", fields: [fromStageId], references: [id])
+  toStage   CrmStage  @relation("ToStage", fields: [toStageId], references: [id])
+  movedBy   User?     @relation(fields: [movedById], references: [id])
+
+  @@index([cardId])
+  @@map("crm_stage_history")
+}
+
+// ---------------------------------------------------------------------------
+// Integrations & settings
+// ---------------------------------------------------------------------------
+
+model AppSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("app_settings")
+}
+
+model IntegrationCredential {
+  id            String    @id @default(cuid())
+  provider      String // LEONA_FLOW | MERCADO_PAGO | OPENAI | N8N | GOOGLE_DRIVE
+  key           String // field name, e.g. accessToken
+  valueEncrypted String   @map("value_encrypted")
+  maskedHint    String    @map("masked_hint")
+  environment   String    @default("production")
+  isActive      Boolean   @default(true) @map("is_active")
+  lastTestedAt  DateTime? @map("last_tested_at")
+  lastTestOk    Boolean?  @map("last_test_ok")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  @@unique([provider, key, environment])
+  @@map("integration_credentials")
+}
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  name       String
+  provider   String    @default("LEONA_FLOW")
+  prefix     String    @unique
+  tokenHash  String    @unique @map("token_hash")
+  scopes     String[]  @default([])
+  isActive   Boolean   @default(true) @map("is_active")
+  lastUsedAt DateTime? @map("last_used_at")
+  revokedAt  DateTime? @map("revoked_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  events IntegrationEvent[]
+
+  @@map("api_keys")
+}
+
+enum IntegrationEventStatus {
+  RECEIVED
+  PROCESSED
+  FAILED
+  DUPLICATE
+}
+
+model IntegrationEvent {
+  id             String                 @id @default(cuid())
+  provider       String
+  eventType      String                 @map("event_type")
+  idempotencyKey String?                @map("idempotency_key")
+  apiKeyId       String?                @map("api_key_id")
+  payload        Json
+  response       Json?
+  status         IntegrationEventStatus @default(RECEIVED)
+  errorMessage   String?                @map("error_message")
+  attempts       Int                    @default(0)
+  processedAt    DateTime?              @map("processed_at")
+  createdAt      DateTime               @default(now()) @map("created_at")
+
+  apiKey ApiKey? @relation(fields: [apiKeyId], references: [id])
+
+  @@unique([provider, idempotencyKey])
+  @@index([status])
+  @@index([createdAt])
+  @@map("integration_events")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?  @map("user_id")
+  actorLabel String?  @map("actor_label")
+  action     String
+  entity     String
+  entityId   String?  @map("entity_id")
+  changes    Json?
+  ipAddress  String?  @map("ip_address")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([entity, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
