@@ -50,7 +50,21 @@ export function PeriodFilter({
 
   return (
     <div className="flex flex-wrap items-center gap-2" data-pending={isPending}>
-      <Select value={preset} onValueChange={(value) => update({ preset: value })}>
+      <Select
+        value={preset}
+        onValueChange={(value) => {
+          if (!value) return;
+          if (value === "custom") {
+            // The range on screen becomes the starting point, so the two inputs
+            // open already filled instead of empty.
+            update({ preset: "custom", from, to });
+            return;
+          }
+          // Leaving the custom range drops its dates; keeping them in the URL
+          // would make a later return to "custom" show a period nobody picked.
+          update({ preset: value, from: null, to: null });
+        }}
+      >
         <SelectTrigger className="w-[190px]">
           <CalendarRange className="size-4" />
           <SelectValue>{PERIOD_LABELS[preset]}</SelectValue>

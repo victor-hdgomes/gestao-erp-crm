@@ -31,6 +31,19 @@ function endOfDay(date: Date): Date {
   return copy;
 }
 
+/**
+ * `2026-11-03` parsed by `new Date` lands on UTC midnight, which in Brazil is
+ * still the previous evening — and the day would silently shift. Noon keeps the
+ * date intact in every timezone the app is used from.
+ */
+function parseInputDate(value: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  const parsed = match
+    ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12)
+    : new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 export function resolvePeriod(params: {
   preset?: string | null;
   from?: string | null;
@@ -39,12 +52,28 @@ export function resolvePeriod(params: {
   const now = new Date();
   const preset = (params.preset ?? "last30") as PeriodPreset;
 
-  if (preset === "custom" && params.from && params.to) {
-    const from = new Date(params.from);
-    const to = new Date(params.to);
-    if (!Number.isNaN(from.getTime()) && !Number.isNaN(to.getTime())) {
-      return { from: startOfDay(from), to: endOfDay(to), preset: "custom" };
+  if (preset === "custom") {
+    // The dates arrive one at a time, as the user fills each input, and the
+    // preset has to survive having none of them — otherwise picking "Período
+    // personalizado" would bounce straight back to the default range.
+    const from = params.from ? parseInputDate(params.from) : null;
+    const to = params.to ? parseInputDate(params.to) : null;
+    const custom = (first: Date, last: Date): ResolvedPeriod => ({
+      from: startOfDay(first),
+      to: endOfDay(last),
+      preset: "custom",
+    });
+
+    if (from && to) {
+      // A range typed backwards would return nothing at all; reading it as the
+      // same interval is closer to what the person meant.
+      return from <= to ? custom(from, to) : custom(to, from);
     }
+    // With a single end given, the missing one is measured from it, never from
+    // today — otherwise an old start date would stretch the range to this week.
+    if (from) return custom(from, from > now ? from : now);
+    if (to) return custom(addDays(to, -29), to);
+    return custom(addDays(now, -29), now);
   }
 
   switch (preset) {
