@@ -24,7 +24,8 @@ import { hasPermission, requirePermission } from "@/lib/auth/session";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { moneyToString } from "@/lib/money";
 import { resolvePeriod, toInputDate } from "@/lib/period";
-import { listExpenseCategories, listPaymentMethods } from "@/server/catalog/catalog-service";
+import { listPaymentMethods } from "@/server/catalog/catalog-service";
+import { listTransactionCategories } from "@/server/lookups/lookups-service";
 import { listCustomers } from "@/server/customers/customers-service";
 import {
   listContractsForSelect,
@@ -55,6 +56,7 @@ export default async function TransactionsPage({ searchParams }: PageProps<"/tra
     { items, totals, total, pageCount, missingPaymentMethod },
     paymentMethods,
     expenseCategories,
+    incomeCategories,
     contracts,
     openSales,
     customers,
@@ -67,7 +69,8 @@ export default async function TransactionsPage({ searchParams }: PageProps<"/tra
         page,
       }),
       listPaymentMethods(),
-      listExpenseCategories(),
+      listTransactionCategories({ kind: "EXPENSE" }),
+      listTransactionCategories({ kind: "INCOME" }),
       listContractsForSelect(),
       listOpenSalesForSelect(),
       listCustomers({ pageSize: 10 }),
@@ -77,6 +80,10 @@ export default async function TransactionsPage({ searchParams }: PageProps<"/tra
     <TransactionDialog
       paymentMethods={paymentMethods.map((method) => ({ id: method.id, name: method.name }))}
       expenseCategories={expenseCategories.map((category) => ({
+        id: category.id,
+        name: category.name,
+      }))}
+      incomeCategories={incomeCategories.map((category) => ({
         id: category.id,
         name: category.name,
       }))}
@@ -219,7 +226,7 @@ export default async function TransactionsPage({ searchParams }: PageProps<"/tra
                           {transaction.customer.name}
                         </Link>
                       ) : (
-                        (transaction.expenseCategory?.name ?? "—")
+                        (transaction.category?.name ?? "—")
                       )}
                     </TableCell>
                     <TableCell>{formatDate(transaction.competenceDate)}</TableCell>

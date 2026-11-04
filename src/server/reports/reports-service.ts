@@ -170,7 +170,7 @@ async function expensesReport(period: { from: Date; to: Date }): Promise<ReportT
       status: { notIn: ["CANCELLED", "REFUNDED"] },
     },
     orderBy: { competenceDate: "desc" },
-    include: { expenseCategory: true, paymentMethod: true },
+    include: { category: true, paymentMethod: true },
   });
 
   return {
@@ -178,7 +178,7 @@ async function expensesReport(period: { from: Date; to: Date }): Promise<ReportT
     rows: transactions.map((transaction) => [
       transaction.code,
       transaction.competenceDate.toISOString().slice(0, 10),
-      transaction.expenseCategory?.name ?? "",
+      transaction.category?.name ?? "",
       transaction.description,
       moneyToString(transaction.expectedAmount),
       moneyToString(transaction.settledAmount),

@@ -7,7 +7,6 @@ import { requirePermission } from "@/lib/auth/session";
 import { productCreateSchema, productUpdateSchema } from "@/lib/schemas/catalog";
 import {
   archiveProduct,
-  createExpenseCategory,
   createPaymentMethod,
   createProduct,
   updateProduct,
@@ -67,18 +66,6 @@ export async function archiveProductAction(id: string): Promise<ActionResult<nul
 }
 
 export type LookupOption = { id: string; name: string };
-
-export async function createExpenseCategoryAction(
-  name: string,
-): Promise<ActionResult<LookupOption>> {
-  return toActionResult(async () => {
-    const user = await requirePermission(PERMISSIONS.FINANCE_MANAGE);
-    const category = await createExpenseCategory(name, { actorId: user.id });
-    revalidatePath("/transacoes");
-    revalidatePath("/financeiro");
-    return { id: category.id, name: category.name };
-  });
-}
 
 export async function createPaymentMethodAction(
   name: string,

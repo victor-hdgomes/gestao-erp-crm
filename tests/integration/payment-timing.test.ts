@@ -344,7 +344,7 @@ describe("payment timing", () => {
     });
 
     const document = await testPrisma.document.findFirstOrThrow({
-      where: { customerId: customer.id, kind: "CONTRACT" },
+      where: { customerId: customer.id, type: { key: "contract" } },
     });
     expect(document.contractId).toBe(sale.contracts[0].id);
     expect(document.url).toBe("https://drive.google.com/file/d/contrato-assinado");

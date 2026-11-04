@@ -124,6 +124,17 @@ export const PAGE_HELP = {
     doIt: ["Criar usuários", "Atribuir perfis", "Desativar o acesso de alguém"],
     notice: "As permissões são checadas no servidor, não apenas escondem botões na tela.",
   },
+  cadastros: {
+    summary:
+      "As listas que aparecem dentro dos formulários: categorias de receita, de despesa e tipos de documento.",
+    see: ["Cada cadastro com quantos lançamentos ou documentos dependem dele"],
+    doIt: [
+      "Criar, renomear e arquivar categorias e tipos",
+      "Ver o que está em uso antes de arquivar",
+    ],
+    notice:
+      "Arquivar nunca apaga: o cadastro some das escolhas novas e o histórico mantém o rótulo. Os marcados como “do sistema” alimentam indicadores do dashboard e não podem ser desativados.",
+  },
   configuracoes: {
     summary: "Ajustes gerais da operação e das integrações.",
     see: ["Dados da empresa, regras financeiras padrão e estado das integrações"],

@@ -3,6 +3,7 @@ import { notFound, validationError } from "@/lib/errors";
 import { recordAudit } from "@/server/shared/audit";
 import { toCents } from "@/lib/money";
 import type { ProductCreateInput } from "@/lib/schemas/catalog";
+import { toLookupKey } from "@/server/lookups/lookups-service";
 
 export async function listProducts(filters: { search?: string; onlyActive?: boolean } = {}) {
   return prisma.productService.findMany({
@@ -101,55 +102,6 @@ export async function listPaymentMethods() {
     where: { isActive: true },
     orderBy: { name: "asc" },
   });
-}
-
-export async function listExpenseCategories() {
-  return prisma.expenseCategory.findMany({
-    where: { isActive: true },
-    orderBy: { name: "asc" },
-  });
-}
-
-/** Slug used as the stable key of a lookup row, so renames never break references. */
-function toLookupKey(name: string): string {
-  return name
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-}
-
-export async function createExpenseCategory(
-  name: string,
-  options: { actorId?: string | null } = {},
-) {
-  const label = name.trim();
-  const key = toLookupKey(label);
-  if (key.length < 2) throw validationError("Informe um nome para a categoria.");
-
-  const existing = await prisma.expenseCategory.findUnique({ where: { key } });
-  if (existing) {
-    // Reactivating beats creating a near-duplicate the user would have to clean up.
-    if (existing.isActive) return existing;
-    return prisma.expenseCategory.update({
-      where: { id: existing.id },
-      data: { isActive: true, name: label },
-    });
-  }
-
-  const category = await prisma.expenseCategory.create({ data: { key, name: label } });
-
-  await recordAudit({
-    userId: options.actorId ?? null,
-    action: "catalog.expenseCategory.create",
-    entity: "ExpenseCategory",
-    entityId: category.id,
-    changes: { key, name: label },
-  });
-
-  return category;
 }
 
 export async function createPaymentMethod(

@@ -74,7 +74,7 @@ export async function createTransaction(
           type: input.type,
           description: input.description,
           customerId: input.customerId ?? null,
-          expenseCategoryId: input.expenseCategoryId ?? null,
+          categoryId: input.categoryId ?? null,
           paymentMethodId: input.paymentMethodId ?? null,
           expectedAmount: expected.toFixed(2),
           settledAmount: settled.toFixed(2),
@@ -106,7 +106,7 @@ export async function createTransaction(
 
       return tx.transaction.findUniqueOrThrow({
         where: { id: transaction.id },
-        include: { allocations: true, customer: true, expenseCategory: true, paymentMethod: true },
+        include: { allocations: true, customer: true, category: true, paymentMethod: true },
       });
     },
     { isolationLevel: "Serializable", timeout: 20000 },

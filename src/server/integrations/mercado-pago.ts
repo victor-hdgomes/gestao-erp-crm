@@ -144,7 +144,7 @@ export async function applyApprovedPayment(
         ? `Mercado Pago — ${installment.contract.code}`
         : `Mercado Pago — pagamento ${paymentId}`,
       customerId: installment?.contract.customerId ?? null,
-      expenseCategoryId: null,
+      categoryId: null,
       paymentMethodId: null,
       expectedAmount: amount,
       settledAmount: amount,

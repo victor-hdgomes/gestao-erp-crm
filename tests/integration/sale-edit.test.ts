@@ -113,6 +113,9 @@ describe("sale editing", () => {
   it("keeps the same contract so its documents stay attached", async () => {
     const { sale } = await sell("mesmo-contrato", "1000.00", ["1000.00"]);
     const before = await testPrisma.contract.findFirstOrThrow({ where: { saleId: sale.id } });
+    const contractType = await testPrisma.documentType.findUniqueOrThrow({
+      where: { key: "contract" },
+    });
 
     await testPrisma.document.create({
       data: {
@@ -120,7 +123,7 @@ describe("sale editing", () => {
         contractId: before.id,
         title: "Contrato assinado",
         url: "https://example.test/contrato",
-        kind: "CONTRACT",
+        typeId: contractType.id,
       },
     });
 

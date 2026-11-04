@@ -31,7 +31,7 @@ export const transactionCreateSchema = z
     type: transactionTypeSchema,
     description: z.string().trim().min(3, "Descreva a transação."),
     customerId: z.string().nullable().optional(),
-    expenseCategoryId: z.string().nullable().optional(),
+    categoryId: z.string().nullable().optional(),
     paymentMethodId: z.string().nullable().optional(),
     expectedAmount: positiveMoneySchema,
     settledAmount: nonNegativeMoneySchema.default("0"),
@@ -45,8 +45,8 @@ export const transactionCreateSchema = z
     allocations: z.array(allocationInputSchema).default([]),
   })
   .refine(
-    (value) => value.type !== "EXPENSE" || Boolean(value.expenseCategoryId),
-    { message: "Selecione a categoria da despesa.", path: ["expenseCategoryId"] },
+    (value) => value.type !== "EXPENSE" || Boolean(value.categoryId),
+    { message: "Selecione a categoria da despesa.", path: ["categoryId"] },
   )
   .refine(
     (value) => Number(value.settledAmount) === 0 || Boolean(value.settledAt),
@@ -65,7 +65,7 @@ export const transactionFilterSchema = z.object({
   type: transactionTypeSchema.optional(),
   status: transactionStatusSchema.optional(),
   customerId: z.string().optional(),
-  expenseCategoryId: z.string().optional(),
+  categoryId: z.string().optional(),
   search: z.string().trim().optional(),
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),

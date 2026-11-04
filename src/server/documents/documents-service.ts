@@ -10,7 +10,7 @@ export const documentCreateSchema = z.object({
   contractId: z.string().min(1).nullable().optional(),
   title: z.string().trim().min(2, "Informe um título."),
   url: urlSchema,
-  kind: z.enum(["DRIVE_FOLDER", "CONTRACT", "RECEIPT", "OTHER"]).default("OTHER"),
+  typeId: z.string().min(1).nullable().optional(),
   notes: optionalString,
 });
 
@@ -29,6 +29,7 @@ export async function listDocuments(filters: { search?: string; customerId?: str
     include: {
       customer: { select: { id: true, name: true } },
       contract: { select: { id: true, code: true } },
+      type: { select: { id: true, name: true } },
     },
   });
 }
@@ -43,7 +44,7 @@ export async function createDocument(
       contractId: input.contractId ?? null,
       title: input.title,
       url: input.url,
-      kind: input.kind,
+      typeId: input.typeId ?? null,
       notes: input.notes ?? null,
       externalId: options.externalId ?? null,
     },

@@ -5,7 +5,7 @@ export type TransactionFilters = {
   type?: "INCOME" | "EXPENSE";
   status?: "PENDING" | "PARTIALLY_SETTLED" | "SETTLED" | "OVERDUE" | "CANCELLED" | "REFUNDED";
   customerId?: string;
-  expenseCategoryId?: string;
+  categoryId?: string;
   search?: string;
   from?: Date;
   to?: Date;
@@ -21,7 +21,7 @@ export async function listTransactions(filters: TransactionFilters = {}) {
     type: filters.type,
     status: filters.status,
     customerId: filters.customerId,
-    expenseCategoryId: filters.expenseCategoryId,
+    categoryId: filters.categoryId,
     competenceDate:
       filters.from || filters.to
         ? { gte: filters.from ?? undefined, lte: filters.to ?? undefined }
@@ -44,7 +44,7 @@ export async function listTransactions(filters: TransactionFilters = {}) {
       take: pageSize,
       include: {
         customer: { select: { id: true, name: true } },
-        expenseCategory: true,
+        category: true,
         paymentMethod: true,
         allocations: { where: { reversedAt: null } },
       },
@@ -190,7 +190,7 @@ export async function getTransactionDetails(id: string) {
     where: { id },
     include: {
       customer: true,
-      expenseCategory: true,
+      category: true,
       paymentMethod: true,
       allocations: {
         include: {

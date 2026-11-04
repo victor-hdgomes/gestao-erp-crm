@@ -106,7 +106,7 @@ export async function createSale(input: SaleCreateInput, options: CreateSaleOpti
             contractId,
             title: "Contrato assinado",
             url: contractUrl,
-            kind: "CONTRACT",
+            typeId: await contractTypeId(tx),
           },
         });
       }
@@ -207,6 +207,12 @@ async function buildSaleItems(tx: PrismaTransactionClient, input: SaleItemInput[
   });
 
   return { items, productById };
+}
+
+/** O tipo "Contrato" é de sistema: existe desde o seed e não é removível. */
+async function contractTypeId(tx: PrismaTransactionClient): Promise<string | null> {
+  const type = await tx.documentType.findUnique({ where: { key: "contract" } });
+  return type?.id ?? null;
 }
 
 async function createContractForSale(
@@ -525,7 +531,7 @@ export async function updateSale(
       const contractUrl = input.contract?.documentUrl?.trim();
       if (contractId && contractUrl) {
         const current = await tx.document.findFirst({
-          where: { contractId, kind: "CONTRACT", deletedAt: null },
+          where: { contractId, type: { key: "contract" }, deletedAt: null },
         });
         if (current) {
           await tx.document.update({ where: { id: current.id }, data: { url: contractUrl } });
@@ -536,7 +542,7 @@ export async function updateSale(
               contractId,
               title: "Contrato assinado",
               url: contractUrl,
-              kind: "CONTRACT",
+              typeId: await contractTypeId(tx),
             },
           });
         }

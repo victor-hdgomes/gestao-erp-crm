@@ -36,11 +36,24 @@ const PAYMENT_METHODS = [
   { key: "transfer", name: "Transferência" },
 ];
 
-const EXPENSE_CATEGORIES = [
-  { key: "paid_traffic", name: "Tráfego pago", isSystem: true },
-  { key: "consultations", name: "Consultas", isSystem: true },
-  { key: "operational", name: "Operacional", isSystem: true },
-  { key: "others", name: "Outros", isSystem: true },
+// isSystem só para as duas que alimentam indicadores próprios do dashboard:
+// desativá-las deixaria um cartão da tela sem fonte. O resto o usuário manda.
+const TRANSACTION_CATEGORIES = [
+  { key: "paid_traffic", name: "Tráfego pago", kind: "EXPENSE" as const, isSystem: true },
+  { key: "consultations", name: "Consultas", kind: "EXPENSE" as const, isSystem: true },
+  { key: "operational", name: "Operacional", kind: "EXPENSE" as const, isSystem: false },
+  { key: "others", name: "Outros", kind: "EXPENSE" as const, isSystem: false },
+  { key: "service_revenue", name: "Serviços", kind: "INCOME" as const, isSystem: false },
+  { key: "consultation_revenue", name: "Consultas", kind: "INCOME" as const, isSystem: false },
+  { key: "other_revenue", name: "Outras receitas", kind: "INCOME" as const, isSystem: false },
+];
+
+const DOCUMENT_TYPES = [
+  // Criados pelo próprio sistema ao salvar uma venda com link de contrato.
+  { key: "contract", name: "Contrato", isSystem: true },
+  { key: "drive_folder", name: "Pasta do Drive", isSystem: false },
+  { key: "receipt", name: "Comprovante", isSystem: false },
+  { key: "other", name: "Outro", isSystem: false },
 ];
 
 async function seedPermissionsAndRoles() {
@@ -141,11 +154,19 @@ async function seedBaseData() {
     });
   }
 
-  for (const category of EXPENSE_CATEGORIES) {
-    await prisma.expenseCategory.upsert({
+  for (const category of TRANSACTION_CATEGORIES) {
+    await prisma.transactionCategory.upsert({
       where: { key: category.key },
       create: category,
-      update: { name: category.name },
+      update: { name: category.name, kind: category.kind, isSystem: category.isSystem },
+    });
+  }
+
+  for (const type of DOCUMENT_TYPES) {
+    await prisma.documentType.upsert({
+      where: { key: type.key },
+      create: type,
+      update: { name: type.name, isSystem: type.isSystem },
     });
   }
 
@@ -297,7 +318,7 @@ async function seedDemoOperation(adminId: string, catalog: Catalog) {
     when: Date;
     paymentMethodId: string;
   }) {
-    const category = await prisma.expenseCategory.findUniqueOrThrow({
+    const category = await prisma.transactionCategory.findUniqueOrThrow({
       where: { key: params.categoryKey },
     });
 
@@ -305,7 +326,7 @@ async function seedDemoOperation(adminId: string, catalog: Catalog) {
       {
         type: "EXPENSE",
         description: params.description,
-        expenseCategoryId: category.id,
+        categoryId: category.id,
         paymentMethodId: params.paymentMethodId,
         expectedAmount: params.amount,
         settledAmount: params.amount,
@@ -580,13 +601,15 @@ async function seedDemoOperation(adminId: string, catalog: Catalog) {
   await advanceCard(gabriela.id, 1, "Documentos recebidos.");
 
   // Documentos avulsos, além dos contratos assinados criados junto com as vendas.
+  const contractType = await prisma.documentType.findUniqueOrThrow({ where: { key: "contract" } });
+  const otherType = await prisma.documentType.findUniqueOrThrow({ where: { key: "other" } });
   await createDocument(
     {
       customerId: carla.id,
       contractId: carlaSale.contracts[0].id,
       title: "Proposta comercial assinada",
       url: "https://drive.google.com/file/d/proposta-carla",
-      kind: "CONTRACT",
+      typeId: contractType.id,
       notes: null,
     },
     { actorId: adminId },
@@ -597,7 +620,7 @@ async function seedDemoOperation(adminId: string, catalog: Catalog) {
       contractId: brunoSale.contracts[0].id,
       title: "Comprovante de residência",
       url: "https://drive.google.com/file/d/residencia-bruno",
-      kind: "OTHER",
+      typeId: otherType.id,
       notes: null,
     },
     { actorId: adminId },
@@ -674,7 +697,7 @@ async function main() {
   console.log("Seeding users...");
   const admin = await seedUsers(withDemo);
 
-  console.log("Seeding payment methods, expense categories and CRM stages...");
+  console.log("Seeding payment methods, categories, document types and CRM stages...");
   await seedBaseData();
 
   console.log("Seeding catalog...");

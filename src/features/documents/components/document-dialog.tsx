@@ -18,31 +18,27 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { CustomerPicker } from "@/features/customers/components/customer-picker";
 import type { CustomerOption } from "@/server/customers/customers-actions";
 import { createDocumentAction } from "@/server/documents/documents-actions";
+import { CreatableSelect } from "@/components/common/creatable-select";
+import { createDocumentTypeAction } from "@/server/lookups/lookups-actions";
 
-const KIND_LABEL: Record<string, string> = {
-  DRIVE_FOLDER: "Pasta do Drive",
-  CONTRACT: "Contrato",
-  RECEIPT: "Comprovante",
-  OTHER: "Outro",
-};
+export type DocumentTypeOption = { id: string; name: string };
 
-export function DocumentDialog({ recentCustomers }: { recentCustomers: CustomerOption[] }) {
+export function DocumentDialog({
+  recentCustomers,
+  documentTypes,
+}: {
+  recentCustomers: CustomerOption[];
+  documentTypes: DocumentTypeOption[];
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [customer, setCustomer] = useState<CustomerOption | null>(null);
   const [title, setTitle] = useState("");
   const [url, setUrl] = useState("");
-  const [kind, setKind] = useState("OTHER");
+  const [typeId, setTypeId] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string[]>>({});
   const [isPending, startTransition] = useTransition();
 
@@ -55,7 +51,7 @@ export function DocumentDialog({ recentCustomers }: { recentCustomers: CustomerO
         customerId: customer?.id ?? null,
         title,
         url,
-        kind,
+        typeId,
         notes: null,
       });
 
@@ -69,6 +65,7 @@ export function DocumentDialog({ recentCustomers }: { recentCustomers: CustomerO
       setOpen(false);
       setTitle("");
       setUrl("");
+      setTypeId(null);
       setCustomer(null);
       router.refresh();
     });
@@ -122,18 +119,16 @@ export function DocumentDialog({ recentCustomers }: { recentCustomers: CustomerO
               </Field>
 
               <Field label="Tipo">
-                <Select value={kind} onValueChange={(value) => setKind(value ?? "OTHER")}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue>{KIND_LABEL[kind]}</SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Object.entries(KIND_LABEL).map(([value, label]) => (
-                      <SelectItem key={value} value={value}>
-                        {label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <CreatableSelect
+                  value={typeId}
+                  onValueChange={setTypeId}
+                  options={documentTypes}
+                  placeholder="Selecionar tipo"
+                  emptyLabel="Sem tipo"
+                  createLabel="Novo tipo"
+                  createPlaceholder="Nome do tipo"
+                  onCreate={createDocumentTypeAction}
+                />
               </Field>
             </div>
           </ScrollArea>

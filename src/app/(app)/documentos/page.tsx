@@ -21,16 +21,10 @@ import { PERMISSIONS } from "@/lib/auth/permissions";
 import { hasPermission, requirePermission } from "@/lib/auth/session";
 import { formatDate } from "@/lib/format";
 import { listCustomers } from "@/server/customers/customers-service";
+import { listDocumentTypes } from "@/server/lookups/lookups-service";
 import { listDocuments } from "@/server/documents/documents-service";
 
 export const metadata: Metadata = { title: "Documentos" };
-
-const KIND_LABEL: Record<string, string> = {
-  DRIVE_FOLDER: "Pasta do Drive",
-  CONTRACT: "Contrato",
-  RECEIPT: "Comprovante",
-  OTHER: "Outro",
-};
 
 export default async function DocumentsPage({ searchParams }: PageProps<"/documentos">) {
   const user = await requirePermission(PERMISSIONS.DOCUMENT_VIEW);
@@ -39,9 +33,10 @@ export default async function DocumentsPage({ searchParams }: PageProps<"/docume
   const params = await searchParams;
   const search = typeof params.search === "string" ? params.search : undefined;
 
-  const [documents, customers] = await Promise.all([
+  const [documents, customers, documentTypes] = await Promise.all([
     listDocuments({ search }),
     listCustomers({ pageSize: 10 }),
+    listDocumentTypes(),
   ]);
 
   const dialog = canManage ? (
@@ -52,6 +47,7 @@ export default async function DocumentsPage({ searchParams }: PageProps<"/docume
         document: customer.document,
         phone: customer.phone,
       }))}
+      documentTypes={documentTypes.map((type) => ({ id: type.id, name: type.name }))}
     />
   ) : null;
 
@@ -105,9 +101,11 @@ export default async function DocumentsPage({ searchParams }: PageProps<"/docume
                       )}
                     </TableCell>
                     <TableCell>
-                      <Badge variant="secondary">
-                        {KIND_LABEL[document.kind] ?? document.kind}
-                      </Badge>
+                      {document.type ? (
+                        <Badge variant="secondary">{document.type.name}</Badge>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       {formatDate(document.createdAt)}

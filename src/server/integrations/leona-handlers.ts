@@ -261,7 +261,7 @@ export async function createTransactionFromLeona(payload: unknown) {
     : null;
 
   const category = input.expenseCategory
-    ? await prisma.expenseCategory.findUnique({ where: { key: input.expenseCategory } })
+    ? await prisma.transactionCategory.findUnique({ where: { key: input.expenseCategory } })
     : null;
 
   if (input.type === "EXPENSE" && !category) {
@@ -273,7 +273,7 @@ export async function createTransactionFromLeona(payload: unknown) {
       type: input.type,
       description: input.description,
       customerId: customer?.id ?? null,
-      expenseCategoryId: category?.id ?? null,
+      categoryId: category?.id ?? null,
       paymentMethodId: paymentMethod?.id ?? null,
       expectedAmount: input.amount,
       settledAmount: input.settled ? input.amount : "0",
@@ -313,6 +313,8 @@ export async function createTransactionFromLeona(payload: unknown) {
 export const leonaDocumentSchema = documentCreateSchema.extend({
   customerDocument: cpfSchema.optional(),
   externalId: z.string().optional().nullable(),
+  /** Chave do tipo de documento, como "contract". Desconhecida vira sem tipo. */
+  type: z.string().optional().nullable(),
 });
 
 export async function createDocumentFromLeona(payload: unknown) {
@@ -330,8 +332,12 @@ export async function createDocumentFromLeona(payload: unknown) {
     if (duplicate) return { id: duplicate.id, created: false };
   }
 
+  const type = input.type
+    ? await prisma.documentType.findUnique({ where: { key: input.type } })
+    : null;
+
   const document = await createDocument(
-    { ...input, customerId: customer?.id ?? null },
+    { ...input, customerId: customer?.id ?? null, typeId: input.typeId ?? type?.id ?? null },
     { externalId: input.externalId ?? null },
   );
 

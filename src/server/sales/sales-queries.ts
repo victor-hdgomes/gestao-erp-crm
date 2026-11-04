@@ -79,7 +79,7 @@ export async function getSaleDetails(id: string) {
       items: { include: { product: true } },
       contracts: {
         include: {
-          documents: { where: { kind: "CONTRACT", deletedAt: null }, take: 1 },
+          documents: { where: { type: { key: "contract" }, deletedAt: null }, take: 1 },
           installments: {
             orderBy: { number: "asc" },
             include: {

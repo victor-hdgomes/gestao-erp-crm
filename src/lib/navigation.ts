@@ -5,6 +5,7 @@ import {
   FolderOpen,
   KanbanSquare,
   LayoutDashboard,
+  ListChecks,
   Package,
   Receipt,
   Settings,
@@ -107,6 +108,12 @@ export const NAVIGATION: NavGroup[] = [
         href: "/usuarios",
         icon: Building2,
         permission: PERMISSIONS.USER_VIEW,
+      },
+      {
+        label: "Cadastros",
+        href: "/cadastros",
+        icon: ListChecks,
+        permission: PERMISSIONS.SETTINGS_VIEW,
       },
       {
         label: "Configurações",

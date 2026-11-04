@@ -34,10 +34,11 @@ import { CustomerPicker } from "@/features/customers/components/customer-picker"
 import { formatCurrency, formatDate } from "@/lib/format";
 import { toInputDate } from "@/lib/period";
 import type { CustomerOption } from "@/server/customers/customers-actions";
+import { createPaymentMethodAction } from "@/server/catalog/catalog-actions";
 import {
   createExpenseCategoryAction,
-  createPaymentMethodAction,
-} from "@/server/catalog/catalog-actions";
+  createIncomeCategoryAction,
+} from "@/server/lookups/lookups-actions";
 import { createTransactionAction } from "@/server/finance/finance-actions";
 
 export type ContractOption = {
@@ -70,6 +71,7 @@ type Option = { id: string; name: string };
 type TransactionDialogProps = {
   paymentMethods: Option[];
   expenseCategories: Option[];
+  incomeCategories: Option[];
   contracts: ContractOption[];
   openSales: OpenSaleOption[];
   recentCustomers: CustomerOption[];
@@ -80,6 +82,7 @@ type TransactionDialogProps = {
 export function TransactionDialog({
   paymentMethods,
   expenseCategories,
+  incomeCategories,
   contracts,
   openSales,
   recentCustomers,
@@ -93,7 +96,7 @@ export function TransactionDialog({
   const [type, setType] = useState<"INCOME" | "EXPENSE">(defaultType);
   const [description, setDescription] = useState("");
   const [customer, setCustomer] = useState<CustomerOption | null>(null);
-  const [expenseCategoryId, setExpenseCategoryId] = useState<string | null>(null);
+  const [categoryId, setCategoryId] = useState<string | null>(null);
   const [paymentMethodId, setPaymentMethodId] = useState<string | null>(null);
   const [expectedAmount, setExpectedAmount] = useState("0.00");
   const [settledAmount, setSettledAmount] = useState("0.00");
@@ -143,7 +146,7 @@ export function TransactionDialog({
     setType(defaultType);
     setDescription("");
     setCustomer(null);
-    setExpenseCategoryId(null);
+    setCategoryId(null);
     setPaymentMethodId(null);
     setExpectedAmount("0.00");
     setSettledAmount("0.00");
@@ -179,7 +182,7 @@ export function TransactionDialog({
           type,
           description,
           customerId: type === "INCOME" ? (customer?.id ?? null) : null,
-          expenseCategoryId: type === "EXPENSE" ? expenseCategoryId : null,
+          categoryId,
           paymentMethodId,
           expectedAmount,
           settledAmount,
@@ -241,7 +244,12 @@ export function TransactionDialog({
             <div className="space-y-4 pb-1">
               <Tabs
                 value={type}
-                onValueChange={(value) => setType(value as "INCOME" | "EXPENSE")}
+                onValueChange={(value) => {
+                  setType(value as "INCOME" | "EXPENSE");
+                  // Receita e despesa têm listas próprias; manter a escolha
+                  // anterior deixaria um id que não existe na lista nova.
+                  setCategoryId(null);
+                }}
               >
                 <TabsList>
                   <TabsTrigger value="INCOME">Receita</TabsTrigger>
@@ -394,19 +402,31 @@ export function TransactionDialog({
                     </Field>
                   ) : null}
                 </div>
-              ) : (
-                <Field label="Categoria" required>
-                  <CreatableSelect
-                    value={expenseCategoryId}
-                    onValueChange={setExpenseCategoryId}
-                    options={expenseCategories}
-                    placeholder="Selecionar categoria"
-                    createLabel="Nova categoria"
-                    createPlaceholder="Nome da categoria"
-                    onCreate={createExpenseCategoryAction}
-                  />
-                </Field>
-              )}
+              ) : null}
+
+              <Field
+                label="Categoria"
+                required={type === "EXPENSE"}
+                hint={
+                  type === "INCOME"
+                    ? "Opcional. Separa o que entrou por serviço, consulta ou outra origem."
+                    : undefined
+                }
+              >
+                <CreatableSelect
+                  key={type}
+                  value={categoryId}
+                  onValueChange={setCategoryId}
+                  options={type === "INCOME" ? incomeCategories : expenseCategories}
+                  placeholder="Selecionar categoria"
+                  emptyLabel={type === "INCOME" ? "Sem categoria" : undefined}
+                  createLabel="Nova categoria"
+                  createPlaceholder="Nome da categoria"
+                  onCreate={
+                    type === "INCOME" ? createIncomeCategoryAction : createExpenseCategoryAction
+                  }
+                />
+              </Field>
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="Valor previsto" required>

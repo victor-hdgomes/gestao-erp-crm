@@ -52,7 +52,7 @@ export async function getDashboardMetrics(period: DashboardPeriod): Promise<Dash
         select: {
           expectedAmount: true,
           settledAmount: true,
-          expenseCategory: { select: { key: true } },
+          category: { select: { key: true } },
         },
       }),
       // Receivables are a balance, not a flow: every open installment counts,
@@ -89,12 +89,12 @@ export async function getDashboardMetrics(period: DashboardPeriod): Promise<Dash
 
   const adsExpenses = sumMoney(
     expenses
-      .filter((item) => item.expenseCategory?.key === ADS_CATEGORY_KEY)
+      .filter((item) => item.category?.key === ADS_CATEGORY_KEY)
       .map((item) => item.settledAmount),
   );
   const consultationExpenses = sumMoney(
     expenses
-      .filter((item) => item.expenseCategory?.key === CONSULTATION_CATEGORY_KEY)
+      .filter((item) => item.category?.key === CONSULTATION_CATEGORY_KEY)
       .map((item) => item.settledAmount),
   );
 
@@ -177,12 +177,12 @@ export async function getExpensesByCategory(period: DashboardPeriod): Promise<Ca
       competenceDate: { gte: period.from, lte: period.to },
       status: { notIn: ["CANCELLED", "REFUNDED"] },
     },
-    select: { settledAmount: true, expenseCategory: { select: { name: true } } },
+    select: { settledAmount: true, category: { select: { name: true } } },
   });
 
   const totals = new Map<string, number>();
   for (const row of rows) {
-    const label = row.expenseCategory?.name ?? "Sem categoria";
+    const label = row.category?.name ?? "Sem categoria";
     totals.set(label, (totals.get(label) ?? 0) + Number(toCents(row.settledAmount).toFixed(2)));
   }
 
