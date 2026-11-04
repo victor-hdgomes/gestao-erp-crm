@@ -126,11 +126,12 @@ export const PAGE_HELP = {
   },
   cadastros: {
     summary:
-      "As listas que aparecem dentro dos formulários: categorias de receita, de despesa e tipos de documento.",
-    see: ["Cada cadastro com quantos lançamentos ou documentos dependem dele"],
+      "As listas que o resto do sistema usa: etapas do Kanban, categorias de receita, de despesa e tipos de documento.",
+    see: ["Cada cadastro com quantos cards, lançamentos ou documentos dependem dele"],
     doIt: [
+      "Criar, renomear, reordenar e remover as colunas do CRM",
       "Criar, renomear e arquivar categorias e tipos",
-      "Ver o que está em uso antes de arquivar",
+      "Ver o que está em uso antes de remover",
     ],
     notice:
       "Arquivar nunca apaga: o cadastro some das escolhas novas e o histórico mantém o rótulo. Os marcados como “do sistema” alimentam indicadores do dashboard e não podem ser desativados.",

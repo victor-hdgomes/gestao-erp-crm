@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { PageHeader } from "@/components/common/page-header";
+import { StageManager } from "@/features/crm/components/stage-manager";
 import { LookupManager, type LookupRow } from "@/features/lookups/components/lookup-manager";
 import { PERMISSIONS } from "@/lib/auth/permissions";
 import { hasPermission, requirePermission } from "@/lib/auth/session";
@@ -13,6 +14,7 @@ import {
   updateDocumentTypeAction,
   updateTransactionCategoryAction,
 } from "@/server/lookups/lookups-actions";
+import { countCardsByStage, listStages } from "@/server/crm/stages-service";
 import {
   countDocumentsByType,
   countTransactionsByCategory,
@@ -26,10 +28,13 @@ export default async function LookupsPage() {
   const user = await requirePermission(PERMISSIONS.SETTINGS_VIEW);
   const canManageFinance = hasPermission(user, PERMISSIONS.FINANCE_MANAGE);
   const canManageDocuments = hasPermission(user, PERMISSIONS.DOCUMENT_MANAGE);
+  const canManageCrm = hasPermission(user, PERMISSIONS.CRM_MANAGE);
 
-  const [categories, documentTypes] = await Promise.all([
+  const [categories, documentTypes, stages, stageCards] = await Promise.all([
     listTransactionCategories({ includeInactive: true }),
     listDocumentTypes({ includeInactive: true }),
+    listStages(),
+    countCardsByStage(),
   ]);
 
   const [categoryUsage, typeUsage] = await Promise.all([
@@ -64,6 +69,17 @@ export default async function LookupsPage() {
       />
 
       <div className="space-y-6">
+        <StageManager
+          canManage={canManageCrm}
+          stages={stages.map((stage) => ({
+            id: stage.id,
+            name: stage.name,
+            color: stage.color,
+            isFinal: stage.isFinal,
+            cardCount: stageCards.get(stage.id) ?? 0,
+          }))}
+        />
+
         <LookupManager
           title="Categorias de receita"
           description="Separam a origem do dinheiro que entra: serviço, consulta, outra coisa."

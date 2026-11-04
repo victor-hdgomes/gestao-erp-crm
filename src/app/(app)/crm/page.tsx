@@ -41,6 +41,14 @@ export default async function CrmPage({ searchParams }: PageProps<"/crm">) {
             >
               Só inadimplentes
             </Link>
+            {canManage ? (
+              <Link
+                href="/cadastros"
+                className="hover:bg-muted rounded-md border px-3 py-1.5 text-sm"
+              >
+                Editar etapas
+              </Link>
+            ) : null}
           </div>
         }
       />
