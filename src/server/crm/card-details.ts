@@ -29,6 +29,17 @@ export type CardDetailsDto = {
     address: string | null;
     driveFolderUrl: string | null;
     notes: string | null;
+    /** Campos crus, para o painel abrir o formulário de edição já preenchido. */
+    form: {
+      zipCode: string | null;
+      street: string | null;
+      number: string | null;
+      complement: string | null;
+      district: string | null;
+      city: string | null;
+      state: string | null;
+      status: "LEAD" | "ACTIVE" | "INACTIVE" | "BLOCKED";
+    };
   };
   contract: {
     id: string;
@@ -100,6 +111,16 @@ export async function getCardDetailsDto(cardId: string): Promise<CardDetailsDto>
       address: address || null,
       driveFolderUrl: card.customer.driveFolderUrl,
       notes: card.customer.notes,
+      form: {
+        zipCode: card.customer.zipCode,
+        street: card.customer.street,
+        number: card.customer.number,
+        complement: card.customer.complement,
+        district: card.customer.district,
+        city: card.customer.city,
+        state: card.customer.state,
+        status: card.customer.status,
+      },
     },
     contract:
       card.contract && summary
@@ -129,18 +150,9 @@ export async function getCardDetailsDto(cardId: string): Promise<CardDetailsDto>
     service: card.service
       ? { name: card.service.product.name, status: card.service.status }
       : null,
-    documents: [
-      ...card.customer.documents.map((document) => ({
-        id: document.id,
-        title: document.title,
-        url: document.url,
-      })),
-      ...(card.contract?.documents ?? []).map((document) => ({
-        id: document.id,
-        title: document.title,
-        url: document.url,
-      })),
-    ],
+    // O contrato assinado costuma estar preso ao cliente e ao contrato ao mesmo
+    // tempo, e aparecia duas vezes na lista.
+    documents: dedupeById([...card.customer.documents, ...(card.contract?.documents ?? [])]),
     history: card.history.map((entry) => ({
       id: entry.id,
       createdAt: entry.createdAt.toISOString(),
@@ -149,4 +161,15 @@ export async function getCardDetailsDto(cardId: string): Promise<CardDetailsDto>
       by: entry.movedBy?.name ?? null,
     })),
   };
+}
+
+function dedupeById(
+  documents: { id: string; title: string; url: string }[],
+): { id: string; title: string; url: string }[] {
+  const byId = new Map<string, { id: string; title: string; url: string }>();
+  for (const document of documents) {
+    if (byId.has(document.id)) continue;
+    byId.set(document.id, { id: document.id, title: document.title, url: document.url });
+  }
+  return [...byId.values()];
 }

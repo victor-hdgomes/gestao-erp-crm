@@ -76,6 +76,8 @@ type TransactionDialogProps = {
   openSales: OpenSaleOption[];
   recentCustomers: CustomerOption[];
   defaultType?: "INCOME" | "EXPENSE";
+  /** Já abre amarrado a alguém, para quem chega de uma tela de cliente. */
+  defaultCustomer?: CustomerOption | null;
   trigger?: React.ReactNode;
 };
 
@@ -87,6 +89,7 @@ export function TransactionDialog({
   openSales,
   recentCustomers,
   defaultType = "INCOME",
+  defaultCustomer = null,
   trigger,
 }: TransactionDialogProps) {
   const router = useRouter();
@@ -95,7 +98,7 @@ export function TransactionDialog({
   const [open, setOpen] = useState(false);
   const [type, setType] = useState<"INCOME" | "EXPENSE">(defaultType);
   const [description, setDescription] = useState("");
-  const [customer, setCustomer] = useState<CustomerOption | null>(null);
+  const [customer, setCustomer] = useState<CustomerOption | null>(defaultCustomer);
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [paymentMethodId, setPaymentMethodId] = useState<string | null>(null);
   const [expectedAmount, setExpectedAmount] = useState("0.00");
@@ -145,7 +148,7 @@ export function TransactionDialog({
   function reset() {
     setType(defaultType);
     setDescription("");
-    setCustomer(null);
+    setCustomer(defaultCustomer);
     setCategoryId(null);
     setPaymentMethodId(null);
     setExpectedAmount("0.00");

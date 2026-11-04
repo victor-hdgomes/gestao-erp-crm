@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
-import { ExternalLink, FolderOpen, Loader2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ExternalLink, FolderPlus, FolderOpen, Loader2, Pencil, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { CopyField } from "@/components/common/copy-field";
@@ -25,20 +26,54 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { CustomerDialog } from "@/features/customers/components/customer-dialog";
+import {
+  TransactionDialog,
+  type ContractOption,
+  type OpenSaleOption,
+} from "@/features/finance/components/transaction-dialog";
 import { formatCpf, formatCurrency, formatDate, formatPhone } from "@/lib/format";
-import { loadCardDetailsAction } from "@/server/crm/crm-actions";
+import { loadCardDetailsAction, moveCardAction } from "@/server/crm/crm-actions";
 import type { CardDetailsDto } from "@/server/crm/card-details";
+import type { CustomerOption } from "@/server/customers/customers-actions";
+
+export type DrawerStage = { id: string; name: string };
+
+/** Tudo que o diálogo de transação precisa, carregado uma vez pela página. */
+export type DrawerFinanceOptions = {
+  paymentMethods: { id: string; name: string }[];
+  expenseCategories: { id: string; name: string }[];
+  incomeCategories: { id: string; name: string }[];
+  contracts: ContractOption[];
+  openSales: OpenSaleOption[];
+};
 
 type CardDrawerProps = {
   cardId: string | null;
   onClose: () => void;
+  canManage: boolean;
+  stages: DrawerStage[];
+  finance: DrawerFinanceOptions | null;
 };
 
-export function CardDrawer({ cardId, onClose }: CardDrawerProps) {
+export function CardDrawer({ cardId, onClose, canManage, stages, finance }: CardDrawerProps) {
+  const router = useRouter();
+  const [editingCustomer, setEditingCustomer] = useState(false);
+  const [isMoving, startMove] = useTransition();
   const [loaded, setLoaded] = useState<{ cardId: string; details: CardDetailsDto } | null>(
     null,
   );
+  // Limpar os dados não basta para recarregar: o efeito só reage ao cardId, e
+  // reabrir o mesmo card depois de uma edição deixaria o painel girando.
+  const [refreshToken, setRefreshToken] = useState(0);
   const [openedCardId, setOpenedCardId] = useState<string | null>(cardId);
 
   // Drop the previous card's data during render, so the drawer never shows the
@@ -69,11 +104,46 @@ export function CardDrawer({ cardId, onClose }: CardDrawerProps) {
       active = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cardId]);
+  }, [cardId, refreshToken]);
+
+  function refresh() {
+    setLoaded(null);
+    setRefreshToken((token) => token + 1);
+  }
+
+  function moveTo(stageId: string | null) {
+    if (!stageId || !details || stageId === details.stage.id) return;
+    startMove(async () => {
+      const result = await moveCardAction({ cardId: details.id, toStageId: stageId });
+      if (!result.success) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success("Card movido.");
+      refresh();
+      router.refresh();
+    });
+  }
+
+  const customerOption: CustomerOption | null = details
+    ? {
+        id: details.customer.id,
+        name: details.customer.name,
+        document: details.customer.document,
+        phone: details.customer.phone,
+      }
+    : null;
 
   return (
+    <>
     <Sheet open={cardId !== null} onOpenChange={(open) => !open && onClose()}>
-      <SheetContent side="right" className="w-full sm:max-w-xl">
+      <SheetContent
+        side="right"
+        // A variante data-[side=right] do Sheet trava em max-w-sm e vence um
+        // sm:max-w-* solto, que o tailwind-merge não enxerga como conflito.
+        // Por isso a largura daqui precisa vir na mesma variante.
+        className="w-full data-[side=right]:sm:max-w-3xl"
+      >
         {!details ? (
           <div className="flex h-full items-center justify-center">
             <Loader2 className="text-muted-foreground size-5 animate-spin" />
@@ -87,7 +157,79 @@ export function CardDrawer({ cardId, onClose }: CardDrawerProps) {
               </SheetDescription>
             </SheetHeader>
 
-            <ScrollArea className="h-[calc(100dvh-7rem)] px-4">
+            {canManage ? (
+              <div className="flex flex-wrap items-center gap-2 px-4">
+                <Select
+                  value={details.stage.id}
+                  onValueChange={moveTo}
+                  disabled={isMoving}
+                >
+                  <SelectTrigger className="w-full sm:w-64">
+                    <SelectValue>{details.stage.name}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {stages.map((stage) => (
+                      <SelectItem key={stage.id} value={stage.id}>
+                        {stage.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Button variant="outline" size="sm" onClick={() => setEditingCustomer(true)}>
+                  <Pencil className="size-4" />
+                  Editar cliente
+                </Button>
+
+                {details.customer.driveFolderUrl ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    nativeButton={false}
+                    render={
+                      <a
+                        href={details.customer.driveFolderUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      />
+                    }
+                  >
+                    <FolderOpen className="size-4" />
+                    Pasta do cliente
+                  </Button>
+                ) : (
+                  <Button variant="outline" size="sm" onClick={() => setEditingCustomer(true)}>
+                    <FolderPlus className="size-4" />
+                    Adicionar pasta
+                  </Button>
+                )}
+
+                {finance ? (
+                  <TransactionDialog
+                    {...finance}
+                    recentCustomers={customerOption ? [customerOption] : []}
+                    defaultCustomer={customerOption}
+                    trigger={
+                      <Button variant="outline" size="sm">
+                        <Plus className="size-4" />
+                        Nova transação
+                      </Button>
+                    }
+                  />
+                ) : null}
+
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  nativeButton={false}
+                  render={<Link href={`/clientes/${details.customer.id}`} />}
+                >
+                  Ficha completa
+                </Button>
+              </div>
+            ) : null}
+
+            <ScrollArea className="min-h-0 flex-1 px-4">
               <Tabs defaultValue="dados" className="pb-6">
                 <TabsList>
                   <TabsTrigger value="dados">Dados</TabsTrigger>
@@ -96,54 +238,33 @@ export function CardDrawer({ cardId, onClose }: CardDrawerProps) {
                 </TabsList>
 
                 <TabsContent value="dados" className="space-y-3">
-                  <CopyField label="Nome completo" value={details.customer.name} />
-                  <CopyField
-                    label="CPF"
-                    value={formatCpf(details.customer.document)}
-                    copyValue={details.customer.document}
-                  />
-                  <CopyField
-                    label="Telefone"
-                    value={formatPhone(details.customer.phone)}
-                    copyValue={details.customer.phone}
-                  />
-                  <CopyField label="Endereço" value={details.customer.address} />
-                  {details.contract ? (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <CopyField label="Nome completo" value={details.customer.name} />
                     <CopyField
-                      label="Data de início"
-                      value={formatDate(details.contract.startDate)}
+                      label="CPF"
+                      value={formatCpf(details.customer.document)}
+                      copyValue={details.customer.document}
                     />
-                  ) : null}
+                    <CopyField
+                      label="Telefone"
+                      value={formatPhone(details.customer.phone)}
+                      copyValue={details.customer.phone}
+                    />
+                    <CopyField label="E-mail" value={details.customer.email} />
+                    <CopyField
+                      label="Endereço"
+                      value={details.customer.address}
+                      className="sm:col-span-2"
+                    />
+                    {details.contract ? (
+                      <CopyField
+                        label="Data de início"
+                        value={formatDate(details.contract.startDate)}
+                      />
+                    ) : null}
+                  </div>
 
                   <Separator />
-
-                  <div className="flex flex-wrap gap-2">
-                    {details.customer.driveFolderUrl ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        nativeButton={false}
-                        render={
-                          <a
-                            href={details.customer.driveFolderUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          />
-                        }
-                      >
-                        <FolderOpen className="size-4" />
-                        Pasta do cliente
-                      </Button>
-                    ) : null}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      nativeButton={false}
-                      render={<Link href={`/clientes/${details.customer.id}`} />}
-                    >
-                      Ficha completa
-                    </Button>
-                  </div>
 
                   {details.documents.length > 0 ? (
                     <div className="space-y-2">
@@ -186,14 +307,29 @@ export function CardDrawer({ cardId, onClose }: CardDrawerProps) {
                         />
                       </div>
 
-                      <p className="text-muted-foreground text-sm">
-                        Próxima cobrança:{" "}
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-muted-foreground text-sm">
+                          Próxima cobrança:{" "}
                         {details.contract.nextDueDate
                           ? `${formatDate(details.contract.nextDueDate)} · ${formatCurrency(
                               details.contract.nextDueAmount ?? 0,
                             )}`
-                          : "nenhuma parcela em aberto"}
-                      </p>
+                            : "nenhuma parcela em aberto"}
+                        </p>
+                        {canManage && finance ? (
+                          <TransactionDialog
+                            {...finance}
+                            recentCustomers={customerOption ? [customerOption] : []}
+                            defaultCustomer={customerOption}
+                            trigger={
+                              <Button size="sm">
+                                <Plus className="size-4" />
+                                Lançar recebimento
+                              </Button>
+                            }
+                          />
+                        ) : null}
+                      </div>
 
                       <Table>
                         <TableHeader>
@@ -283,6 +419,38 @@ export function CardDrawer({ cardId, onClose }: CardDrawerProps) {
         )}
       </SheetContent>
     </Sheet>
+
+      {details ? (
+        <CustomerDialog
+          open={editingCustomer}
+          onOpenChange={(next) => {
+            setEditingCustomer(next);
+            // Fechou depois de salvar: o painel recarrega com o que mudou.
+            if (!next) {
+              refresh();
+              router.refresh();
+            }
+          }}
+          customer={{
+            id: details.customer.id,
+            name: details.customer.name,
+            document: details.customer.document ?? "",
+            phone: details.customer.phone ?? "",
+            email: details.customer.email ?? "",
+            zipCode: details.customer.form.zipCode ?? "",
+            street: details.customer.form.street ?? "",
+            number: details.customer.form.number ?? "",
+            complement: details.customer.form.complement ?? "",
+            district: details.customer.form.district ?? "",
+            city: details.customer.form.city ?? "",
+            state: details.customer.form.state ?? "",
+            driveFolderUrl: details.customer.driveFolderUrl ?? "",
+            notes: details.customer.notes ?? "",
+            status: details.customer.form.status,
+          }}
+        />
+      ) : null}
+    </>
   );
 }
 
