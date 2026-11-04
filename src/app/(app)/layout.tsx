@@ -1,8 +1,10 @@
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { AppHeader } from "@/components/layout/app-header";
-import { AppSidebar } from "@/components/layout/app-sidebar";
+import { SidebarShell } from "@/components/layout/sidebar-shell";
 import { getCurrentUser } from "@/lib/auth/session";
+import { SIDEBAR_COOKIE } from "@/lib/sidebar";
 import { getGeneralSettings } from "@/server/settings/settings-service";
 
 export default async function AppLayout({ children }: LayoutProps<"/">) {
@@ -10,14 +12,15 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
   if (!user) redirect("/login");
 
   const settings = await getGeneralSettings();
+  const collapsed = (await cookies()).get(SIDEBAR_COOKIE)?.value === "1";
 
   return (
     <div className="flex min-h-dvh">
-      <aside className="bg-sidebar hidden w-64 shrink-0 border-r lg:block">
-        <div className="sticky top-0 h-dvh">
-          <AppSidebar permissions={user.permissions} companyName={settings.companyName} />
-        </div>
-      </aside>
+      <SidebarShell
+        permissions={user.permissions}
+        companyName={settings.companyName}
+        defaultCollapsed={collapsed}
+      />
 
       <div className="flex min-w-0 flex-1 flex-col">
         <AppHeader
