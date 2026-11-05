@@ -1,0 +1,235 @@
+{
+  "name": "Pagamento confirmado - Mercado Pago",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mercado-pago",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "mercado-pago-avisa",
+      "name": "Mercado Pago avisa",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "mercado-pago-pagamento"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Primeira porta: so passa adiante uma notificacao de pagamento de verdade.\n// A protecao que vale dinheiro nao e esta: e a reconsulta na API do Mercado\n// Pago, no proximo no. Esta aqui descarta barulho e, quando ha segredo\n// configurado, confere a assinatura.\nconst req = $input.first().json;\nconst headers = req.headers ?? {};\nconst query = req.query ?? {};\nconst body = req.body ?? {};\n\nconst topico = query.topic || query.type || body.type || '';\nif (topico && topico !== 'payment') return [];\n\nconst paymentId = String(body?.data?.id ?? query['data.id'] ?? query.id ?? '').trim();\nif (!paymentId) return [];\n\nlet segredo = '';\ntry { segredo = $env.MP_WEBHOOK_SECRET || ''; } catch (e) { segredo = ''; }\n\nif (segredo) {\n  const assinatura = String(headers['x-signature'] ?? '');\n  const partes = Object.fromEntries(\n    assinatura.split(',').map((p) => p.split('=').map((s) => s.trim())),\n  );\n  const manifesto =\n    'id:' + paymentId +\n    ';request-id:' + (headers['x-request-id'] ?? '') +\n    ';ts:' + (partes.ts ?? '') + ';';\n\n  let calculada;\n  try {\n    const chave = await crypto.subtle.importKey(\n      'raw',\n      new TextEncoder().encode(segredo),\n      { name: 'HMAC', hash: 'SHA-256' },\n      false,\n      ['sign'],\n    );\n    const buf = await crypto.subtle.sign('HMAC', chave, new TextEncoder().encode(manifesto));\n    calculada = [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');\n  } catch (erro) {\n    throw new Error(\n      'Nao consegui calcular a assinatura neste n8n. Remova MP_WEBHOOK_SECRET para seguir sem a conferencia, ou habilite o crypto no Code node. Detalhe: ' + erro.message,\n    );\n  }\n\n  if (calculada !== partes.v1) throw new Error('Assinatura do webhook invalida.');\n}\n\nreturn [{ json: { paymentId: paymentId } }];"
+      },
+      "id": "validar-notificacao",
+      "name": "Validar notificacao",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.mercadopago.com/v1/payments/{{ $json.paymentId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "buscar-pagamento",
+      "name": "Buscar pagamento",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// O Mercado Pago avisa de varias mudancas de estado. So \"approved\" e dinheiro.\nconst p = $input.first().json;\nif (p.status !== 'approved') return [];\n\n// payment_type_id -> chave da forma de pagamento no ERP.\nconst metodos = {\n  credit_card: 'credit_card',\n  debit_card: 'debit_card',\n  ticket: 'boleto',\n  bank_transfer: 'pix',\n  account_money: 'transfer',\n};\n\n// O external_reference foi preenchido pela Leona com o telefone do contato.\nconst telefone = String(p.external_reference ?? '').replace(/[^0-9]/g, '');\nif (!telefone) {\n  throw new Error('Pagamento ' + p.id + ' chegou sem telefone no external_reference.');\n}\n\nconst nome =\n  p.metadata?.nome ||\n  [p.payer?.first_name, p.payer?.last_name].filter(Boolean).join(' ').trim() ||\n  'Cliente do WhatsApp';\n\nreturn [{\n  json: {\n    paymentId: String(p.id),\n    telefone: telefone,\n    nome: nome,\n    valor: Number(p.transaction_amount).toFixed(2),\n    metodo: metodos[p.payment_type_id] ?? null,\n    aprovadoEm: p.date_approved ?? null,\n  },\n}];"
+      },
+      "id": "somente-aprovado",
+      "name": "Somente aprovado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://gestao-erp-crm.vercel.app/api/v1/integrations/leona/customers",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ name: $json.nome, phone: $json.telefone, externalId: 'leona:' + $json.telefone, source: 'Leona Flow', status: 'ACTIVE' }) }}",
+        "options": {}
+      },
+      "id": "cliente-no-erp",
+      "name": "Cliente no ERP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://gestao-erp-crm.vercel.app/api/v1/integrations/leona/transactions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "=mp-payment-{{ $('Somente aprovado').item.json.paymentId }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ type: 'INCOME', description: 'Consulta + Analise de Credito - Mercado Pago', customerId: $json.data.id, amount: $('Somente aprovado').item.json.valor, settled: true, settledAt: $('Somente aprovado').item.json.aprovadoEm, category: 'consultation_revenue', paymentMethod: $('Somente aprovado').item.json.metodo, externalId: $('Somente aprovado').item.json.paymentId, externalProvider: 'MERCADO_PAGO' }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "transacao-no-erp",
+      "name": "Transacao no ERP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aqui mora a garantia de nao mandar a mensagem duas vezes.\n// Duas redes, nao uma: o cabecalho Idempotency-Key devolve a resposta guardada\n// do primeiro envio, e o indice unico (provedor, id externo) do ERP responde\n// 409 se o reenvio vier com outra chave. Qualquer um dos dois significa\n// \"ja tratamos esse pagamento\", e o fluxo para aqui sem avisar a Leona.\nconst res = $input.first().json;\nconst status = res.statusCode ?? 0;\nconst corpo = res.body ?? {};\n\nif (corpo?.meta?.idempotent === true) return [];\nif (status === 409) return [];\n\nif (status >= 400) {\n  throw new Error('O ERP recusou o lancamento: ' + JSON.stringify(corpo));\n}\n\nreturn [{ json: { transacao: corpo?.data ?? null } }];"
+      },
+      "id": "primeira-vez",
+      "name": "Primeira vez",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "COLE_AQUI_A_URL_DO_WEBHOOK_DE_ENTRADA_DA_LEONA",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ telefone: $('Somente aprovado').item.json.telefone, nome: $('Somente aprovado').item.json.nome, valor: $('Somente aprovado').item.json.valor, pagamento_id: $('Somente aprovado').item.json.paymentId }) }}",
+        "options": {}
+      },
+      "id": "avisar-a-leona",
+      "name": "Avisar a Leona",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Mercado Pago avisa": {
+      "main": [
+        [
+          {
+            "node": "Validar notificacao",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar notificacao": {
+      "main": [
+        [
+          {
+            "node": "Buscar pagamento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar pagamento": {
+      "main": [
+        [
+          {
+            "node": "Somente aprovado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Somente aprovado": {
+      "main": [
+        [
+          {
+            "node": "Cliente no ERP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cliente no ERP": {
+      "main": [
+        [
+          {
+            "node": "Transacao no ERP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transacao no ERP": {
+      "main": [
+        [
+          {
+            "node": "Primeira vez",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Primeira vez": {
+      "main": [
+        [
+          {
+            "node": "Avisar a Leona",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

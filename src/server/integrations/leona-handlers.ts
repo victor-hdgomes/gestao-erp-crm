@@ -238,7 +238,12 @@ export const leonaTransactionSchema = z.object({
   customerDocument: cpfSchema.optional(),
   contractId: z.string().optional().nullable(),
   installmentId: z.string().optional().nullable(),
+  /** Chave da categoria, de receita ou de despesa. */
+  category: z.string().trim().optional().nullable(),
+  /** Nome antigo do campo acima, mantido para nao quebrar chamadas existentes. */
   expenseCategory: z.string().optional().nullable(),
+  /** Quem originou o dinheiro, ex. "MERCADO_PAGO". Define a chave de deduplicacao. */
+  externalProvider: z.string().trim().optional().nullable(),
   amount: positiveMoneySchema,
   settled: z.boolean().default(true),
   dueDate: dateSchema.optional().nullable(),
@@ -260,10 +265,15 @@ export async function createTransactionFromLeona(payload: unknown) {
     ? await prisma.paymentMethod.findUnique({ where: { key: input.paymentMethod } })
     : null;
 
-  const category = input.expenseCategory
-    ? await prisma.transactionCategory.findUnique({ where: { key: input.expenseCategory } })
+  const categoryKey = input.category ?? input.expenseCategory ?? null;
+  const found = categoryKey
+    ? await prisma.transactionCategory.findUnique({ where: { key: categoryKey } })
     : null;
+  const category = found && found.kind === input.type ? found : null;
 
+  // Despesa sem categoria nao entra: o grafico do dashboard depende dela.
+  // Receita entra mesmo assim: uma confirmacao de pagamento nao pode falhar
+  // porque uma linha da tabela de categorias ainda nao existe no ambiente.
   if (input.type === "EXPENSE" && !category) {
     throw unprocessable("Categoria de despesa desconhecida.");
   }
@@ -281,9 +291,11 @@ export async function createTransactionFromLeona(payload: unknown) {
       settledAt: input.settled ? (input.settledAt ?? new Date()) : null,
       competenceDate: input.settledAt ?? new Date(),
       notes: input.notes ?? null,
-      origin: "LEONA_FLOW",
+      origin: input.externalProvider ?? "LEONA_FLOW",
       externalId: input.externalId ?? null,
-      externalProvider: input.externalId ? "LEONA_FLOW" : null,
+      externalProvider: input.externalId
+        ? (input.externalProvider ?? "LEONA_FLOW")
+        : null,
       allocations: input.installmentId
         ? [
             {
