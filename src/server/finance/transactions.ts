@@ -3,6 +3,7 @@ import { Decimal, sumMoney, toCents } from "@/lib/money";
 import { conflict, notFound, unprocessable } from "@/lib/errors";
 import { generateCode } from "@/server/shared/codes";
 import { recordAudit } from "@/server/shared/audit";
+import { withWriteConflictRetry } from "@/server/shared/retry";
 import {
   allocateOldestFirst,
   assertAllocationsFit,
@@ -30,7 +31,12 @@ export async function createTransaction(
   input: TransactionCreateInput,
   options: CreateTransactionOptions = {},
 ) {
-  return prisma.$transaction(
+  // O retry existe porque o codigo (TRX-ANO-00000) e calculado lendo o maior
+  // ja gravado. Duas confirmacoes do mesmo pagamento chegando juntas leem o
+  // mesmo numero e o banco desfaz uma delas. Na segunda tentativa a perdedora
+  // encontra a transacao da vencedora e devolve 409, que e o certo.
+  return withWriteConflictRetry(() =>
+    prisma.$transaction(
     async (tx) => {
       const code = await generateCode(tx, "transaction");
 
@@ -109,7 +115,8 @@ export async function createTransaction(
         include: { allocations: true, customer: true, category: true, paymentMethod: true },
       });
     },
-    { isolationLevel: "Serializable", timeout: 20000 },
+      { isolationLevel: "Serializable", timeout: 20000 },
+    ),
   );
 }
 

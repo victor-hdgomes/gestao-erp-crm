@@ -8,7 +8,8 @@ import { moneyToString } from "@/lib/money";
 import { onlyDigits } from "@/lib/format";
 import { cpfSchema, dateSchema, phoneSchema, positiveMoneySchema } from "@/lib/schemas/common";
 import { customerCreateSchema } from "@/lib/schemas/customer";
-import { createCustomer, updateCustomer } from "@/server/customers/customers-service";
+import { recordAudit } from "@/server/shared/audit";
+import { withWriteConflictRetry } from "@/server/shared/retry";
 import { createSale } from "@/server/sales/sales-service";
 import { createTransaction } from "@/server/finance/transactions";
 import { createDocument, documentCreateSchema } from "@/server/documents/documents-service";
@@ -33,39 +34,109 @@ export const leonaCustomerSchema = customerCreateSchema
     source: z.string().trim().optional().nullable(),
   });
 
-/** Upsert by CPF, then by externalId. Never creates a duplicate person. */
+/** Campos do cliente que a Leona pode mandar, sem os que ela nunca manda. */
+const CUSTOMER_FIELDS = [
+  "name",
+  "document",
+  "phone",
+  "email",
+  "zipCode",
+  "street",
+  "number",
+  "complement",
+  "district",
+  "city",
+  "state",
+  "driveFolderUrl",
+  "notes",
+] as const;
+
+function customerFields(input: z.infer<typeof leonaCustomerSchema>) {
+  const data: Record<string, unknown> = {};
+  for (const field of CUSTOMER_FIELDS) {
+    const value = input[field as keyof typeof input];
+    if (value !== undefined) data[field] = value === "" ? null : value;
+  }
+  return data;
+}
+
+/**
+ * Upsert by CPF, then by externalId. Never creates a duplicate person.
+ *
+ * A busca e a gravacao ficam na mesma transacao serializavel de proposito. O
+ * Mercado Pago avisa o mesmo pagamento duas vezes quase ao mesmo tempo, e com
+ * as consultas soltas as duas chamadas liam "nao existe" antes de qualquer uma
+ * gravar — nasciam dois clientes identicos. Serializavel faz o banco recusar a
+ * segunda, e o retry a traz de volta ja enxergando o cliente da primeira.
+ */
 export async function upsertCustomerFromLeona(payload: unknown) {
   const input = leonaCustomerSchema.parse(payload);
 
-  const existing = input.document
-    ? await prisma.customer.findUnique({ where: { document: input.document } })
-    : input.externalId
-      ? await prisma.customer.findFirst({ where: { externalId: input.externalId } })
-      : null;
+  return withWriteConflictRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
+        const existing = input.document
+          ? await tx.customer.findUnique({ where: { document: input.document } })
+          : input.externalId
+            ? await tx.customer.findFirst({ where: { externalId: input.externalId } })
+            : null;
 
-  if (existing) {
-    await updateCustomer(existing.id, input, { actorId: null });
-    await prisma.customer.update({
-      where: { id: existing.id },
-      data: {
-        externalId: input.externalId ?? existing.externalId,
-        source: input.source ?? existing.source ?? ACTOR,
+        if (existing) {
+          await tx.customer.update({
+            where: { id: existing.id },
+            data: {
+              ...customerFields(input),
+              ...(input.status ? { status: input.status } : {}),
+              externalId: input.externalId ?? existing.externalId,
+              source: input.source ?? existing.source ?? ACTOR,
+            },
+          });
+
+          await recordAudit(
+            {
+              userId: null,
+              actorLabel: ACTOR,
+              action: "customer.update",
+              entity: "Customer",
+              entityId: existing.id,
+              changes: { name: input.name },
+            },
+            tx,
+          );
+
+          return { id: existing.id, created: false };
+        }
+
+        // O externalId nasce junto com o cliente. Gravado depois, como era
+        // antes, ele deixava uma janela em que a chamada paralela procurava
+        // por ele e nao achava nada para reaproveitar.
+        const customer = await tx.customer.create({
+          data: {
+            ...customerFields(input),
+            name: input.name,
+            status: input.status ?? "ACTIVE",
+            externalId: input.externalId ?? null,
+            source: input.source ?? ACTOR,
+          },
+        });
+
+        await recordAudit(
+          {
+            userId: null,
+            actorLabel: ACTOR,
+            action: "customer.create",
+            entity: "Customer",
+            entityId: customer.id,
+            changes: { name: customer.name },
+          },
+          tx,
+        );
+
+        return { id: customer.id, created: true };
       },
-    });
-    return { id: existing.id, created: false };
-  }
-
-  const customer = await createCustomer(
-    { ...input, status: input.status ?? "ACTIVE" },
-    { actorLabel: ACTOR },
+      { isolationLevel: "Serializable", timeout: 20000 },
+    ),
   );
-
-  await prisma.customer.update({
-    where: { id: customer.id },
-    data: { externalId: input.externalId ?? null, source: input.source ?? ACTOR },
-  });
-
-  return { id: customer.id, created: true };
 }
 
 // ---------------------------------------------------------------------------
