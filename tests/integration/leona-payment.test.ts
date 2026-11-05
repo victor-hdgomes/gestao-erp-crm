@@ -169,3 +169,85 @@ describe("pagamento confirmado vindo do n8n", () => {
     expect(transaction.categoryId).toBeNull();
   });
 });
+
+/**
+ * O Mercado Pago avisa o mesmo pagamento mais de uma vez quase junto: uma
+ * notificação "payment" e outra "order" chegam ao n8n no mesmo segundo e
+ * viram duas chamadas simultâneas ao ERP. Em produção isso criou duas vezes
+ * o mesmo cliente e derrubou o lançamento com conflito de escrita.
+ */
+describe("duas notificações do mesmo pagamento chegando juntas", () => {
+  const PARALELO = "TEST_MPRACE_";
+  const phone = "61900000777";
+
+  beforeAll(async () => {
+    await cleanupByPrefix(PARALELO);
+  });
+
+  afterAll(async () => {
+    await cleanupByPrefix(PARALELO);
+  });
+
+  it("não duplica a pessoa quando as duas chamadas correm ao mesmo tempo", async () => {
+    const chamada = () =>
+      upsertCustomerFromLeona({
+        name: `${PARALELO}Victor`,
+        phone,
+        externalId: `leona:${phone}`,
+        source: "Leona Flow",
+        status: "ACTIVE",
+      });
+
+    const [um, dois] = await Promise.all([chamada(), chamada()]);
+
+    // Uma das duas criou; a outra tem de ter encontrado a mesma pessoa.
+    expect(um.id).toBe(dois.id);
+    expect([um.created, dois.created].filter(Boolean)).toHaveLength(1);
+
+    const pessoas = await testPrisma.customer.findMany({
+      where: { externalId: `leona:${phone}` },
+      select: { id: true },
+    });
+    expect(pessoas).toHaveLength(1);
+  });
+
+  it("lança o pagamento uma vez só, mesmo com as duas chegando juntas", async () => {
+    const { id: customerId } = await upsertCustomerFromLeona({
+      name: `${PARALELO}Pagante`,
+      phone: "61900000778",
+      externalId: "leona:61900000778",
+      source: "Leona Flow",
+    });
+
+    const lancamento = () =>
+      createTransactionFromLeona({
+        type: "INCOME",
+        description: `${PARALELO}Consulta pelo Mercado Pago`,
+        customerId,
+        amount: "1.00",
+        settled: true,
+        category: "consultation_revenue",
+        paymentMethod: "pix",
+        externalId: "mp-corrida-0001",
+        externalProvider: "MERCADO_PAGO",
+      });
+
+    const resultados = await Promise.allSettled([lancamento(), lancamento()]);
+
+    const criadas = resultados.filter((r) => r.status === "fulfilled");
+    const recusadas = resultados.filter((r) => r.status === "rejected");
+
+    // Uma entra, a outra é recusada por já existir — e não por erro interno:
+    // é a recusa limpa que faz o n8n parar antes de mandar a segunda mensagem.
+    expect(criadas).toHaveLength(1);
+    expect(recusadas).toHaveLength(1);
+    const erro = (recusadas[0] as PromiseRejectedResult).reason as Error;
+    expect(erro.message).toMatch(/já registrada/i);
+
+    const lancadas = await testPrisma.transaction.findMany({
+      where: { externalProvider: "MERCADO_PAGO", externalId: "mp-corrida-0001" },
+      select: { id: true },
+    });
+    expect(lancadas).toHaveLength(1);
+  });
+});
