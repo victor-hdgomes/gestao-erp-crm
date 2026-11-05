@@ -204,3 +204,36 @@ produção. Com credenciais de teste pode ser preciso usar
 2. Credencial `Mercado Pago (produção)` no n8n, trocada no nó **Buscar pagamento**.
 3. No Mercado Pago, preencher **URL modo produção** com a mesma URL do n8n.
 4. Conferir que a categoria **Consultas** de receita existe no ambiente.
+
+---
+
+## Histórico do bug na Leona (resolvido em 05/11/2026)
+
+Durante a implantação, o webhook de entrada **"Pagamento confirmado - Mercado
+Pago (n8n)", ID 4071** falhou em 100% das requisições:
+
+```
+undefined method `name_locked?' for nil
+```
+
+Registros: #1370480, #1370505, #1370508, #1370513, #1373215. A Leona respondia
+**HTTP 200** e falhava depois, de forma assíncrona, então o n8n não tinha como
+detectar — o cliente pagava, a transação entrava no ERP, e a confirmação no
+WhatsApp não saía.
+
+Descartado do nosso lado: telefone com e sem DDI, número sem contato cadastrado,
+e o campo *Número que dispara* (estava com `{telefone}`, o número do cliente;
+corrigido para a instância `556291176861` — VR FINANCE. O erro continuou, então
+essa config estava errada mas não era a causa).
+
+**Era bug deles.** O suporte corrigiu em 05/11 às 09:49 e ajustou o mapeamento
+junto: hoje os campos são `nome` e `telefone` (sem o prefixo `body.`), com um
+chip `+` no Telefone e `valor` como campo customizado. Primeiro registro
+processado: **#1374069, 09:49:35**. Mensagem confirmada no WhatsApp.
+
+O acesso de administrador dado ao suporte (suporte@leonaflow.com) **foi
+revogado** no mesmo dia, logo após a validação. Em *Acesso de suporte* também
+não há ninguém.
+
+Para conferir o webhook no futuro: Webhooks de entrada › o webhook › aba
+**Histórico** — procurar requisição **Processada** em vez de *Falhou*.
