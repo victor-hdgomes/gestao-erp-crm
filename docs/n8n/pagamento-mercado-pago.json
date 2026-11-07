@@ -98,7 +98,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ type: 'INCOME', description: 'Consulta + Analise de Credito - Mercado Pago', customerId: $json.data.id, amount: $('Somente aprovado').item.json.valor, settled: true, settledAt: $('Somente aprovado').item.json.aprovadoEm, category: 'consultation_revenue', paymentMethod: $('Somente aprovado').item.json.metodo, externalId: $('Somente aprovado').item.json.paymentId, externalProvider: 'MERCADO_PAGO' }) }}",
+        "jsonBody": "={{ JSON.stringify({ type: 'INCOME', description: ($('Buscar pagamento').item.json.additional_info?.items?.[0]?.title || $('Buscar pagamento').item.json.description || 'Consulta - Mercado Pago'), customerId: $json.data.id, amount: $('Somente aprovado').item.json.valor, settled: true, settledAt: $('Somente aprovado').item.json.aprovadoEm, category: 'consultation_revenue', paymentMethod: $('Somente aprovado').item.json.metodo, externalId: $('Somente aprovado').item.json.paymentId, externalProvider: 'MERCADO_PAGO' }) }}",
         "options": {
           "response": {
             "response": {
