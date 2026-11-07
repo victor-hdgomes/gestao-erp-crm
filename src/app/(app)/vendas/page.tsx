@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Plus, ShoppingCart } from "lucide-react";
+import { ClipboardPaste, Plus, ShoppingCart } from "lucide-react";
 
 import { EmptyState } from "@/components/common/empty-state";
 import { PageHeader } from "@/components/common/page-header";
@@ -46,10 +46,20 @@ export default async function SalesPage({ searchParams }: PageProps<"/vendas">) 
         description={`${total} venda(s) registrada(s).`}
         actions={
           canManage ? (
-            <Button nativeButton={false} render={<Link href="/vendas/nova" />}>
-              <Plus className="size-4" />
-              Nova venda
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                nativeButton={false}
+                render={<Link href="/vendas/importar" />}
+              >
+                <ClipboardPaste className="size-4" />
+                Importar ficha
+              </Button>
+              <Button nativeButton={false} render={<Link href="/vendas/nova" />}>
+                <Plus className="size-4" />
+                Nova venda
+              </Button>
+            </div>
           ) : null
         }
       />

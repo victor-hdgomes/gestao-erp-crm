@@ -3,6 +3,7 @@ import { Decimal, sumMoney, toCents } from "@/lib/money";
 import { notFound, unprocessable } from "@/lib/errors";
 import { generateCode } from "@/server/shared/codes";
 import { recordAudit } from "@/server/shared/audit";
+import { withWriteConflictRetry } from "@/server/shared/retry";
 import { recalculateSale } from "@/server/finance/transactions";
 import type { SaleCreateInput, SaleUpdateInput } from "@/lib/schemas/sale";
 
@@ -18,7 +19,12 @@ export type CreateSaleOptions = {
  * contract, installment plan, service execution and CRM card.
  */
 export async function createSale(input: SaleCreateInput, options: CreateSaleOptions = {}) {
-  return prisma.$transaction(
+  // Mesmo motivo do lancamento financeiro: o codigo da venda e calculado
+  // lendo o maior ja gravado, e duas criacoes simultaneas leem o mesmo
+  // numero. O webhook da Leona chega em rajada, entao repetir e barato
+  // perto de devolver 500 no meio de uma venda.
+  return withWriteConflictRetry(() =>
+    prisma.$transaction(
     async (tx) => {
       const customer = await tx.customer.findUnique({ where: { id: input.customerId } });
       if (!customer || customer.deletedAt) throw notFound("Cliente");
@@ -159,7 +165,8 @@ export async function createSale(input: SaleCreateInput, options: CreateSaleOpti
         },
       });
     },
-    { isolationLevel: "Serializable", timeout: 25000 },
+      { isolationLevel: "Serializable", timeout: 25000 },
+    ),
   );
 }
 

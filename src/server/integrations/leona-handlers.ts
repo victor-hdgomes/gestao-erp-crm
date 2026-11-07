@@ -75,11 +75,23 @@ export async function upsertCustomerFromLeona(payload: unknown) {
   return withWriteConflictRetry(() =>
     prisma.$transaction(
       async (tx) => {
-        const existing = input.document
-          ? await tx.customer.findUnique({ where: { document: input.document } })
-          : input.externalId
+        // Tres chaves, nesta ordem. O telefone entrou por ultimo porque e o
+        // unico elo entre quem chega pelo WhatsApp (nasce so com externalId)
+        // e quem chega pela ficha preenchida (nasce com CPF). Sem ele, a
+        // mesma pessoa virava dois cadastros dependendo de por onde entrou.
+        const existing =
+          (input.document
+            ? await tx.customer.findUnique({ where: { document: input.document } })
+            : null) ??
+          (input.externalId
             ? await tx.customer.findFirst({ where: { externalId: input.externalId } })
-            : null;
+            : null) ??
+          (input.phone
+            ? await tx.customer.findFirst({
+                where: { phone: input.phone, deletedAt: null },
+                orderBy: { createdAt: "asc" },
+              })
+            : null);
 
         if (existing) {
           await tx.customer.update({
