@@ -30,15 +30,22 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  */
 export async function withWriteConflictRetry<T>(
   run: () => Promise<T>,
-  attempts = 4,
+  attempts = 6,
 ): Promise<T> {
   for (let attempt = 1; ; attempt += 1) {
     try {
       return await run();
     } catch (error) {
       if (!isRetryable(error) || attempt >= attempts) throw error;
-      // O jitter evita que as duas requisicoes voltem a colidir em sincronia.
-      await sleep(attempt * 25 + Math.random() * 25);
+
+      // A espera dobra a cada tentativa porque quem perdeu a corrida precisa
+      // esperar a transacao vencedora terminar, e ela leva segundos, nao
+      // milissegundos. Com a espera linear de antes o total dava 150ms e a
+      // segunda chamada desistia antes da primeira gravar — foi assim que um
+      // pagamento real caiu em 500 mesmo com o retry ligado. Agora a soma
+      // passa de um segundo e meio. O jitter evita que as duas voltem a
+      // colidir em sincronia.
+      await sleep(50 * 2 ** (attempt - 1) + Math.random() * 50);
     }
   }
 }

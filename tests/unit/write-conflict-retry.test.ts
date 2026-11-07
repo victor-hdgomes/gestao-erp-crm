@@ -72,3 +72,25 @@ describe("withWriteConflictRetry", () => {
     expect(chamadas).toBe(3);
   });
 });
+
+/**
+ * Um pagamento real caiu em 500 no dia 06/11 mesmo com o retry ligado: a
+ * espera somava 150ms e a transação concorrente levava segundos, então a
+ * perdedora desistia antes de a vencedora gravar.
+ */
+describe("fôlego da espera", () => {
+  it("insiste por mais de um segundo antes de desistir", async () => {
+    const inicio = Date.now();
+    let chamadas = 0;
+
+    await expect(
+      withWriteConflictRetry(async () => {
+        chamadas += 1;
+        throw Object.assign(new Error("conflito"), { code: "P2034" });
+      }),
+    ).rejects.toThrow();
+
+    expect(chamadas).toBe(6);
+    expect(Date.now() - inicio).toBeGreaterThan(1000);
+  });
+});
