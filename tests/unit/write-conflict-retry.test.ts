@@ -94,3 +94,93 @@ describe("fôlego da espera", () => {
     expect(Date.now() - inicio).toBeGreaterThan(1000);
   });
 });
+
+/**
+ * O erro que chegou de verdade em 09/11, no formato que o driver adapter
+ * (@prisma/adapter-pg) entrega: sem `code`, com o codigo do Postgres enterrado
+ * em `cause.originalCode`. A checagem antiga olhava so `error.code` e dizia
+ * que isto nao era conflito, entao o retry nunca rodava e o 500 subia inteiro.
+ */
+function driverAdapterConflict() {
+  return Object.assign(new Error("TransactionWriteConflict"), {
+    name: "DriverAdapterError",
+    cause: {
+      originalCode: "40001",
+      originalMessage:
+        "could not serialize access due to read/write dependencies among transactions",
+      kind: "TransactionWriteConflict",
+    },
+  });
+}
+
+describe("conflito vindo do driver adapter", () => {
+  it("repete o DriverAdapterError de conflito de escrita", async () => {
+    let chamadas = 0;
+
+    const resultado = await withWriteConflictRetry(async () => {
+      chamadas += 1;
+      if (chamadas === 1) throw driverAdapterConflict();
+      return "gravou na segunda";
+    });
+
+    expect(resultado).toBe("gravou na segunda");
+    expect(chamadas).toBe(2);
+  });
+
+  it("repete quando o codigo do Postgres vem direto no erro", async () => {
+    let chamadas = 0;
+
+    await withWriteConflictRetry(async () => {
+      chamadas += 1;
+      if (chamadas < 2) throw prismaError("40001");
+      return null;
+    });
+
+    expect(chamadas).toBe(2);
+  });
+
+  it("repete deadlock do Postgres (40P01)", async () => {
+    let chamadas = 0;
+
+    await withWriteConflictRetry(async () => {
+      chamadas += 1;
+      if (chamadas < 2) throw prismaError("40P01");
+      return null;
+    });
+
+    expect(chamadas).toBe(2);
+  });
+
+  it("acha o conflito mesmo embrulhado em outro erro", async () => {
+    let chamadas = 0;
+
+    await withWriteConflictRetry(async () => {
+      chamadas += 1;
+      if (chamadas < 2) {
+        throw Object.assign(new Error("falha na transacao"), {
+          cause: driverAdapterConflict(),
+        });
+      }
+      return null;
+    });
+
+    expect(chamadas).toBe(2);
+  });
+
+  // Continua valendo o ponto da funcao: erro de verdade nao vira tentativa.
+  it("nao repete outro erro do driver adapter", async () => {
+    let chamadas = 0;
+
+    await expect(
+      withWriteConflictRetry(async () => {
+        chamadas += 1;
+        throw Object.assign(new Error("coluna inexistente"), {
+          name: "DriverAdapterError",
+          cause: { originalCode: "42703", kind: "QueryError" },
+        });
+      }),
+    ).rejects.toThrow(/coluna inexistente/);
+
+    expect(chamadas).toBe(1);
+  });
+});

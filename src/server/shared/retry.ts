@@ -6,11 +6,68 @@ import "server-only";
  * significa que o pedido estava errado: significa que duas requisicoes
  * chegaram juntas e o banco desfez uma para manter a ordem.
  */
-const RETRYABLE = new Set(["P2034", "P2035"]);
+const RETRYABLE_PRISMA = new Set(["P2034", "P2035"]);
 
+/**
+ * Os mesmos conflitos vistos pelo lado do Postgres. 40001 e
+ * "serialization_failure", 40P01 e "deadlock_detected".
+ *
+ * Estes importam porque o cliente aqui roda sobre o driver adapter
+ * (@prisma/adapter-pg): nesse caminho o Prisma NAO traduz a falha para P2034 —
+ * ele entrega um DriverAdapterError cru, com o codigo do Postgres guardado em
+ * `cause.originalCode`. Foi exatamente assim que um pagamento real caiu em 500
+ * no dia 09/11 com o retry ja ligado: o erro chegou como
+ *
+ *   Error [DriverAdapterError]: TransactionWriteConflict
+ *     [cause]: { originalCode: '40001', kind: 'TransactionWriteConflict' }
+ *
+ * e a checagem antiga, que olhava so `error.code`, respondia "nao e conflito".
+ * O retry nunca chegou a rodar uma vez sequer.
+ */
+const RETRYABLE_POSTGRES = new Set(["40001", "40P01"]);
+
+/** Como o driver adapter nomeia o mesmo conflito quando nao manda o codigo. */
+const RETRYABLE_KINDS = new Set(["TransactionWriteConflict", "TransactionDeadlock"]);
+
+type ErrorLike = {
+  code?: unknown;
+  originalCode?: unknown;
+  kind?: unknown;
+  cause?: unknown;
+};
+
+/**
+ * Procura o conflito no erro e em toda a cadeia de `cause`.
+ *
+ * A cadeia importa porque cada camada embrulha a anterior: o Prisma embrulha o
+ * driver, que embrulha o erro do `pg`. O codigo pode aparecer em qualquer um
+ * dos niveis, entao olhar so o primeiro deixa passar o caso real.
+ */
 function isRetryable(error: unknown): boolean {
-  const code = (error as { code?: unknown } | null | undefined)?.code;
-  return typeof code === "string" && RETRYABLE.has(code);
+  let current: unknown = error;
+
+  // O limite existe so para nao girar para sempre se alguem montar um ciclo.
+  for (let depth = 0; current && depth < 8; depth += 1) {
+    const candidate = current as ErrorLike;
+
+    if (typeof candidate.code === "string") {
+      if (RETRYABLE_PRISMA.has(candidate.code)) return true;
+      if (RETRYABLE_POSTGRES.has(candidate.code)) return true;
+    }
+
+    if (
+      typeof candidate.originalCode === "string" &&
+      RETRYABLE_POSTGRES.has(candidate.originalCode)
+    ) {
+      return true;
+    }
+
+    if (typeof candidate.kind === "string" && RETRYABLE_KINDS.has(candidate.kind)) return true;
+
+    current = candidate.cause;
+  }
+
+  return false;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
