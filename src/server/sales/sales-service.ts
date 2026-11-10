@@ -117,6 +117,20 @@ export async function createSale(input: SaleCreateInput, options: CreateSaleOpti
         });
       }
 
+      // O custo que o catalogo guarda vira despesa de verdade, e nao so
+      // margem no relatorio. Sem isso o painel mostrava 117,00 de receita e
+      // 0,00 de despesa: o dinheiro que sai para o birô existia apenas como
+      // numero dentro da venda, fora do caixa.
+      await registrarCustoDaVenda(tx, {
+        saleId: sale.id,
+        saleCode: code,
+        customerId: customer.id,
+        quando: input.soldAt ?? new Date(),
+        productById,
+        actorId: options.actorId ?? null,
+        actorLabel: options.actorLabel ?? null,
+      });
+
       // Service executions and CRM cards only for catalog items that ask for them.
       for (const item of items) {
         const product = productById.get(item.productId);
@@ -214,6 +228,129 @@ async function buildSaleItems(tx: PrismaTransactionClient, input: SaleItemInput[
   });
 
   return { items, productById };
+}
+
+/**
+ * Lanca o custo de uma venda que ja existe.
+ *
+ * Serve a correcao retroativa das vendas criadas antes de o custo virar
+ * despesa. Usa exatamente o mesmo caminho da venda nova, entao as duas rotas
+ * nao podem divergir — e a chave unica no banco garante que rodar de novo nao
+ * duplica nada.
+ */
+export async function registrarCustoDeVendaExistente(saleId: string, actorLabel: string | null) {
+  return prisma.$transaction(
+    async (tx) => {
+      const sale = await tx.sale.findUnique({
+        where: { id: saleId },
+        include: { items: true },
+      });
+      if (!sale) throw notFound("Venda");
+
+      const products = await tx.productService.findMany({
+        where: { id: { in: sale.items.map((item) => item.productId) } },
+      });
+
+      await registrarCustoDaVenda(tx, {
+        saleId: sale.id,
+        saleCode: sale.code,
+        customerId: sale.customerId,
+        quando: sale.soldAt,
+        productById: new Map(products.map((product) => [product.id, product])),
+        actorId: null,
+        actorLabel,
+      });
+    },
+    { timeout: 25000 },
+  );
+}
+
+/** Origem e chave externa das despesas que nascem do custo de catalogo. */
+export const ORIGEM_CUSTO_VENDA = "SALE_COST";
+
+/**
+ * Lanca a despesa do custo de cada item da venda.
+ *
+ * Uma despesa por item, nao uma por venda: cada produto tem a sua categoria,
+ * e somar tudo num lancamento so apagaria essa separacao no grafico.
+ *
+ * A chave externa e o id do item. Como (externalProvider, externalId) e unico
+ * no banco, a mesma venda nao consegue gerar a despesa duas vezes — nem aqui
+ * nem pela correcao retroativa, que usa a mesma chave.
+ */
+async function registrarCustoDaVenda(
+  tx: PrismaTransactionClient,
+  params: {
+    saleId: string;
+    saleCode: string;
+    customerId: string;
+    quando: Date;
+    productById: Map<string, { id: string; category: string | null }>;
+    actorId: string | null;
+    actorLabel: string | null;
+  },
+): Promise<void> {
+  const itens = await tx.saleItem.findMany({ where: { saleId: params.saleId } });
+
+  for (const item of itens) {
+    const custo = toCents(item.unitCost).times(item.quantity);
+    if (custo.lessThanOrEqualTo(0)) continue;
+
+    const produto = params.productById.get(item.productId);
+    const categoria = await categoriaDeDespesa(tx, produto?.category ?? null);
+    const code = await generateCode(tx, "transaction");
+
+    const despesa = await tx.transaction.create({
+      data: {
+        code,
+        type: "EXPENSE",
+        description: `Custo — ${item.description} (${params.saleCode})`,
+        customerId: params.customerId,
+        categoryId: categoria?.id ?? null,
+        expectedAmount: custo.toFixed(2),
+        settledAmount: custo.toFixed(2),
+        dueDate: params.quando,
+        settledAt: params.quando,
+        competenceDate: params.quando,
+        status: "SETTLED",
+        origin: ORIGEM_CUSTO_VENDA,
+        externalProvider: ORIGEM_CUSTO_VENDA,
+        externalId: item.id,
+        createdById: params.actorId,
+      },
+    });
+
+    await recordAudit(
+      {
+        userId: params.actorId,
+        actorLabel: params.actorLabel,
+        action: "transaction.create",
+        entity: "Transaction",
+        entityId: despesa.id,
+        changes: { code, type: "EXPENSE", custo: custo.toFixed(2), venda: params.saleCode },
+      },
+      tx,
+    );
+  }
+}
+
+/**
+ * Casa a categoria do produto com a categoria de despesa de mesmo nome.
+ *
+ * "Consulta de crédito" tem categoria "Consultas", e existe uma categoria de
+ * despesa "Consultas" desde o seed. Sem par, cai em "Outros": despesa sem
+ * categoria some do grafico do dashboard, que e justamente onde o custo
+ * precisa aparecer.
+ */
+async function categoriaDeDespesa(tx: PrismaTransactionClient, nome: string | null) {
+  if (nome) {
+    const porNome = await tx.transactionCategory.findFirst({
+      where: { kind: "EXPENSE", isActive: true, name: { equals: nome, mode: "insensitive" } },
+    });
+    if (porNome) return porNome;
+  }
+
+  return tx.transactionCategory.findFirst({ where: { kind: "EXPENSE", key: "others" } });
 }
 
 /** O tipo "Contrato" é de sistema: existe desde o seed e não é removível. */
