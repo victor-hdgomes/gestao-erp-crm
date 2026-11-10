@@ -191,9 +191,35 @@ export async function createSaleFromLeona(payload: unknown) {
   const customer = await resolveCustomer(input.customerId, input.customerDocument);
 
   if (input.externalId) {
-    const duplicate = await prisma.sale.findFirst({ where: { externalId: input.externalId } });
-    if (duplicate) {
-      return { id: duplicate.id, code: duplicate.code, created: false };
+    // A chave externa da consulta e o telefone, entao ela se repete quando o
+    // mesmo cliente compra de novo meses depois. Por isso olha a venda mais
+    // recente e so a reaproveita enquanto o contrato dela ainda estiver em
+    // aberto: a segunda parcela cai na venda certa, e uma compra nova nao e
+    // engolida por uma venda antiga ja quitada.
+    const duplicate = await prisma.sale.findFirst({
+      where: { externalId: input.externalId, deletedAt: null },
+      orderBy: { createdAt: "desc" },
+      include: { contracts: { select: { id: true, code: true, status: true } } },
+    });
+    const emAberto =
+      !!duplicate &&
+      (duplicate.contracts.length === 0 ||
+        duplicate.contracts.some((contract) => contract.status === "ACTIVE"));
+    if (duplicate && emAberto) {
+      // Os contratos vao junto mesmo quando a venda ja existia. A consulta e
+      // vendida uma vez e paga em duas partes: a segunda parte chega numa
+      // chamada separada e precisa do contrato para alocar o pagamento na
+      // parcela certa. Sem isso a segunda parte entrava como dinheiro solto,
+      // sem vinculo com a venda nem com o custo do servico.
+      return {
+        id: duplicate.id,
+        code: duplicate.code,
+        created: false,
+        contracts: duplicate.contracts.map((contract) => ({
+          id: contract.id,
+          code: contract.code,
+        })),
+      };
     }
   }
 
