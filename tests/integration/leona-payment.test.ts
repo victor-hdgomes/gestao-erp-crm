@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { prisma } from "@/lib/prisma";
 import {
+  createSaleFromLeona,
   createTransactionFromLeona,
   upsertCustomerFromLeona,
 } from "@/server/integrations/leona-handlers";
@@ -249,5 +250,46 @@ describe("duas notificações do mesmo pagamento chegando juntas", () => {
       select: { id: true },
     });
     expect(lancadas).toHaveLength(1);
+  });
+
+  /**
+   * Em 11/11 dois clientes ganharam duas consultas cada: a busca pela chave
+   * externa estava fora da transação, então as duas chamadas liam "não existe"
+   * antes de qualquer uma gravar. Agora a busca mora dentro da transação
+   * serializável, o banco recusa a segunda e o retry a traz vendo a primeira.
+   */
+  it("cria uma venda só quando as duas chamadas correm ao mesmo tempo", async () => {
+    const { id: customerId } = await upsertCustomerFromLeona({
+      name: `${PARALELO}Comprador`,
+      phone: "61900000779",
+      externalId: "leona:61900000779",
+      source: "Leona Flow",
+    });
+
+    const externalId = "consulta:61900000779";
+    const venda = () =>
+      createSaleFromLeona({
+        customerId,
+        externalId,
+        items: [{ productName: "Consulta de crédito", quantity: 1 }],
+        installments: [
+          { label: "1ª parte", dueDate: new Date().toISOString(), amount: "58.50" },
+          { label: "2ª parte", dueDate: new Date().toISOString(), amount: "58.50" },
+        ],
+      });
+
+    const [um, dois] = await Promise.all([venda(), venda()]);
+
+    expect(um.id).toBe(dois.id);
+    expect([um.created, dois.created].filter(Boolean)).toHaveLength(1);
+    // O contrato volta nas duas: a 2ª parte chega numa chamada separada e
+    // precisa dele para alocar o pagamento na parcela certa.
+    expect(dois.contracts.length).toBeGreaterThan(0);
+
+    const vendas = await testPrisma.sale.findMany({
+      where: { externalId, deletedAt: null },
+      select: { id: true },
+    });
+    expect(vendas).toHaveLength(1);
   });
 });

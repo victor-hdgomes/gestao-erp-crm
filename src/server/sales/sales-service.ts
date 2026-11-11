@@ -12,6 +12,12 @@ export type CreateSaleOptions = {
   actorLabel?: string | null;
   /** Used by the integration API so a retried webhook does not duplicate a sale. */
   externalId?: string | null;
+  /**
+   * Reaproveita a venda em aberto que ja tem esta chave externa em vez de
+   * criar outra. So a integracao usa: na tela, duas vendas iguais para o
+   * mesmo cliente sao uma decisao de quem digitou.
+   */
+  reuseOpenExternalId?: boolean;
 };
 
 /**
@@ -19,6 +25,30 @@ export type CreateSaleOptions = {
  * contract, installment plan, service execution and CRM card.
  */
 export async function createSale(input: SaleCreateInput, options: CreateSaleOptions = {}) {
+  const { sale } = await criarVenda(input, options);
+  return sale;
+}
+
+/**
+ * Mesma criacao, mas diz se a venda nasceu agora ou se ja existia.
+ *
+ * Com `reuseOpenExternalId`, a busca pela chave externa acontece DENTRO da
+ * transacao serializavel. Isso nao e detalhe: o Mercado Pago avisa o mesmo
+ * pagamento duas ou tres vezes no mesmo segundo, o n8n roda as execucoes em
+ * paralelo e, com a busca fora da transacao, as duas liam "nao existe" antes
+ * de qualquer uma gravar — foi assim que Giliard e Andre Rafel ganharam duas
+ * vendas cada em 11/11. Dentro da transacao o banco enxerga a leitura de uma
+ * contra a gravacao da outra, recusa a segunda com 40001, e o retry a traz de
+ * volta ja vendo a venda da primeira.
+ */
+export async function createSaleIdempotente(
+  input: SaleCreateInput,
+  options: CreateSaleOptions = {},
+) {
+  return criarVenda(input, options);
+}
+
+async function criarVenda(input: SaleCreateInput, options: CreateSaleOptions) {
   // Mesmo motivo do lancamento financeiro: o codigo da venda e calculado
   // lendo o maior ja gravado, e duas criacoes simultaneas leem o mesmo
   // numero. O webhook da Leona chega em rajada, entao repetir e barato
@@ -28,6 +58,31 @@ export async function createSale(input: SaleCreateInput, options: CreateSaleOpti
     async (tx) => {
       const customer = await tx.customer.findUnique({ where: { id: input.customerId } });
       if (!customer || customer.deletedAt) throw notFound("Cliente");
+
+      if (options.reuseOpenExternalId && options.externalId) {
+        // A chave externa da consulta e o telefone, entao ela se repete quando
+        // o mesmo cliente compra de novo meses depois. Por isso olha a venda
+        // mais recente e so a reaproveita enquanto o contrato dela ainda
+        // estiver em aberto: a segunda parcela cai na venda certa, e uma
+        // compra nova nao e engolida por uma venda antiga ja quitada.
+        const anterior = await tx.sale.findFirst({
+          where: { externalId: options.externalId, deletedAt: null },
+          orderBy: { createdAt: "desc" },
+          include: { contracts: { select: { status: true } } },
+        });
+        const emAberto =
+          !!anterior &&
+          (anterior.contracts.length === 0 ||
+            anterior.contracts.some((contrato) => contrato.status === "ACTIVE"));
+
+        if (anterior && emAberto) {
+          const sale = await tx.sale.findUniqueOrThrow({
+            where: { id: anterior.id },
+            include: VENDA_COMPLETA,
+          });
+          return { sale, created: false };
+        }
+      }
 
       const { items, productById } = await buildSaleItems(tx, input.items);
 
@@ -170,19 +225,24 @@ export async function createSale(input: SaleCreateInput, options: CreateSaleOpti
         tx,
       );
 
-      return tx.sale.findUniqueOrThrow({
-        where: { id: sale.id },
-        include: {
-          items: { include: { product: true } },
-          customer: true,
-          contracts: { include: { installments: { orderBy: { number: "asc" } } } },
-        },
-      });
+      return {
+        sale: await tx.sale.findUniqueOrThrow({
+          where: { id: sale.id },
+          include: VENDA_COMPLETA,
+        }),
+        created: true,
+      };
     },
       { isolationLevel: "Serializable", timeout: 25000 },
     ),
   );
 }
+
+const VENDA_COMPLETA = {
+  items: { include: { product: true } },
+  customer: true,
+  contracts: { include: { installments: { orderBy: { number: "asc" } } } },
+} as const;
 
 type SaleItemInput = SaleCreateInput["items"][number];
 

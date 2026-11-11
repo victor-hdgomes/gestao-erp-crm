@@ -10,7 +10,7 @@ import { cpfSchema, dateSchema, phoneSchema, positiveMoneySchema } from "@/lib/s
 import { customerCreateSchema } from "@/lib/schemas/customer";
 import { recordAudit } from "@/server/shared/audit";
 import { withWriteConflictRetry } from "@/server/shared/retry";
-import { createSale } from "@/server/sales/sales-service";
+import { createSaleIdempotente } from "@/server/sales/sales-service";
 import { createTransaction } from "@/server/finance/transactions";
 import { createDocument, documentCreateSchema } from "@/server/documents/documents-service";
 import { moveCard } from "@/server/crm/crm-service";
@@ -190,39 +190,6 @@ export async function createSaleFromLeona(payload: unknown) {
 
   const customer = await resolveCustomer(input.customerId, input.customerDocument);
 
-  if (input.externalId) {
-    // A chave externa da consulta e o telefone, entao ela se repete quando o
-    // mesmo cliente compra de novo meses depois. Por isso olha a venda mais
-    // recente e so a reaproveita enquanto o contrato dela ainda estiver em
-    // aberto: a segunda parcela cai na venda certa, e uma compra nova nao e
-    // engolida por uma venda antiga ja quitada.
-    const duplicate = await prisma.sale.findFirst({
-      where: { externalId: input.externalId, deletedAt: null },
-      orderBy: { createdAt: "desc" },
-      include: { contracts: { select: { id: true, code: true, status: true } } },
-    });
-    const emAberto =
-      !!duplicate &&
-      (duplicate.contracts.length === 0 ||
-        duplicate.contracts.some((contract) => contract.status === "ACTIVE"));
-    if (duplicate && emAberto) {
-      // Os contratos vao junto mesmo quando a venda ja existia. A consulta e
-      // vendida uma vez e paga em duas partes: a segunda parte chega numa
-      // chamada separada e precisa do contrato para alocar o pagamento na
-      // parcela certa. Sem isso a segunda parte entrava como dinheiro solto,
-      // sem vinculo com a venda nem com o custo do servico.
-      return {
-        id: duplicate.id,
-        code: duplicate.code,
-        created: false,
-        contracts: duplicate.contracts.map((contract) => ({
-          id: contract.id,
-          code: contract.code,
-        })),
-      };
-    }
-  }
-
   const items = await Promise.all(
     input.items.map(async (item) => {
       const product = await resolveProduct(item.productId, item.productName);
@@ -239,7 +206,10 @@ export async function createSaleFromLeona(payload: unknown) {
   const paymentMethods = await prisma.paymentMethod.findMany();
   const methodByKey = new Map(paymentMethods.map((method) => [method.key, method.id]));
 
-  const sale = await createSale(
+  // A dedupe pela chave externa roda dentro da transacao da venda, nao aqui.
+  // Fora dela, duas notificacoes do mesmo pagamento chegando no mesmo segundo
+  // liam "nao existe" antes de qualquer uma gravar e criavam duas vendas.
+  const { sale, created } = await createSaleIdempotente(
     {
       customerId: customer.id,
       soldAt: input.soldAt ?? new Date(),
@@ -261,13 +231,20 @@ export async function createSaleFromLeona(payload: unknown) {
           }
         : undefined,
     },
-    { actorLabel: ACTOR, externalId: input.externalId ?? null },
+    {
+      actorLabel: ACTOR,
+      externalId: input.externalId ?? null,
+      reuseOpenExternalId: true,
+    },
   );
 
+  // Os contratos vao junto mesmo quando a venda ja existia. A consulta e
+  // vendida uma vez e paga em duas partes: a segunda parte chega numa chamada
+  // separada e precisa do contrato para alocar o pagamento na parcela certa.
   return {
     id: sale.id,
     code: sale.code,
-    created: true,
+    created,
     contracts: sale.contracts.map((contract) => ({ id: contract.id, code: contract.code })),
   };
 }
