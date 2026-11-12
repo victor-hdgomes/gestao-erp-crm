@@ -30,9 +30,21 @@ const ACTOR = "Leona Flow";
 export const leonaCustomerSchema = customerCreateSchema
   .partial({ status: true })
   .extend({
+    // O nome aqui e o do perfil do WhatsApp, nao um campo preenchido: "DR",
+    // "Ze" e "Jo" sao nomes de verdade. A tela continua pedindo nome completo
+    // (tres letras); nesta rota, recusar a pessoa por causa de duas custou a
+    // venda, o lancamento e a mensagem de confirmacao que ela esperava —
+    // aconteceu em 11/11 com um pagamento de R$ 58,50. O nome completo chega
+    // depois: a propria mensagem de confirmacao pede nome e CPF.
+    name: z.string().trim().optional().nullable(),
     externalId: z.string().trim().optional().nullable(),
     source: z.string().trim().optional().nullable(),
-  });
+  })
+  .transform((input) => ({
+    ...input,
+    // Sem nome nenhum, o telefone identifica melhor que um registro vazio.
+    name: input.name || input.phone || "Sem nome",
+  }));
 
 /** Campos do cliente que a Leona pode mandar, sem os que ela nunca manda. */
 const CUSTOMER_FIELDS = [
